@@ -1,2 +1,41 @@
 # fin-trade-craft
 Monorepository to house ETL of stock market data, perform feature engineering, modeling, forecasting, and portfolio optimization.
+
+```graphql
+Directory Structure
+fin-trade-craft/
+├── README.md
+├── pyproject.toml                  # Dependencies 
+├── config/                         # YAML, JSON, or TOML config files
+│   ├── database.yaml               # Database configuration
+│
+├── db/                             # Database-related logic and assets
+│   ├── schema/                     # DDL scripts, SQL schema definitions
+│   ├── init/                       # Initializers
+│   └── utils.py                    # DB connection, helpers
+│
+├── data_pipeline/                  # Data ingestion and transformation
+│   ├── extract/                    # Strictly for Extracting and Loading raw data from AV API
+│   │   ├── symbol_search.py        # All active symbols from SYMBOL_SEARCH
+|   |   ├── overview.py             # Company overview data from OVERVIEW
+│   │   ├── ts_daily_adjusted.py    # OHLCV data from TIME_SERIES_DAILY_ADJUSTED
+│   │
+│   ├── transform/
+│   │   ├── screening_builder.py
+│   │   ├── fundamentals_table.py
+│   │   ├── sentiment_table.py
+│   │   ├── calendar_table.py
+│   │   └── indicators.py           # e.g. RSI, MACD, etc.
+│   |
+├── features/                       # Feature engineering
+│
+├── models/                         # Machine learning models
+
+├── backtesting/
+│ 
+├── portfolio/
+│   ├── optipy
+│
+├── tests/                          # Unit tests
+│  
+└── utils/                          # Shared helper functions
