@@ -1,0 +1,21 @@
+[project]
+name = "fin-trade-craft"
+version = "0.1.0"
+description = "Environment for monorepository fin-trade-craft"
+readme = "README.md"
+requires-python = ">=3.13"
+license = {text = "MIT"}
+authors = [
+    {name = "Ken Moore", email = "ken.r.moore@gmail.com"},
+]
+dependencies = [
+    "exchange_calendars>=4.10.1",    
+    "numpy>=1.23.0",
+    "pandas>=2.0.0",
+    "pandas_ta>=0.3.14b0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.28.0",
+    "ta>=0.10.2",
+    "urllib3>=1.26.5",
+]
