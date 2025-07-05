@@ -1,5 +1,5 @@
 """
-Extract income statement data from Alpha Vantage API and load into database.
+Extract cash flow data from Alpha Vantage API and load into database.
 """
 
 import requests
@@ -15,10 +15,10 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.database_manager import DatabaseManager
 
-STOCK_API_FUNCTION = "INCOME_STATEMENT"
+STOCK_API_FUNCTION = "CASH_FLOW"
 
-class IncomeStatementExtractor:
-    """Extract and load income statement data from Alpha Vantage API."""
+class CashFlowExtractor:
+    """Extract and load cash flow data from Alpha Vantage API."""
     
     def __init__(self, db_path="db/stock_db.db"):
         # Load ALPHAVANTAGE_API_KEY from .env file
@@ -57,10 +57,10 @@ class IncomeStatementExtractor:
             return {row[1]: row[0] for row in result}
     
     def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
-        """Load symbols that haven't been processed yet (not in income_statement table)."""
+        """Load symbols that haven't been processed yet (not in cash_flow table)."""
         with self.db_manager as db:
             # First ensure the table exists, or create the schema
-            if not db.table_exists('income_statement'):
+            if not db.table_exists('cash_flow'):
                 # Initialize schema to create the table
                 schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
                 db.initialize_schema(schema_path)
@@ -69,8 +69,8 @@ class IncomeStatementExtractor:
             base_query = """
                 SELECT ls.symbol_id, ls.symbol 
                 FROM listing_status ls 
-                LEFT JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
-                WHERE ls.asset_type = 'Stock' AND inc.symbol_id IS NULL
+                LEFT JOIN cash_flow cf ON ls.symbol_id = cf.symbol_id 
+                WHERE ls.asset_type = 'Stock' AND cf.symbol_id IS NULL
             """
             params = []
             
@@ -92,8 +92,8 @@ class IncomeStatementExtractor:
             result = db.fetch_query(base_query, params)
             return {row[1]: row[0] for row in result}
     
-    def extract_single_income_statement(self, symbol):
-        """Extract income statement data for a single symbol."""
+    def extract_single_cash_flow(self, symbol):
+        """Extract cash flow data for a single symbol."""
         print(f"Processing TICKER: {symbol}")
         
         url = f'{self.base_url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}'
@@ -115,12 +115,12 @@ class IncomeStatementExtractor:
                 print(f"API Note for {symbol}: {data['Note']}")
                 return None, 'fail'
             
-            # Check if we have income statement data
+            # Check if we have cash flow data
             if 'annualReports' not in data and 'quarterlyReports' not in data:
-                print(f"No income statement data found for {symbol}")
+                print(f"No cash flow data found for {symbol}")
                 return None, 'fail'
             
-            print(f"Successfully fetched income statement data for {symbol}")
+            print(f"Successfully fetched cash flow data for {symbol}")
             return data, 'pass'
             
         except requests.exceptions.RequestException as e:
@@ -130,8 +130,8 @@ class IncomeStatementExtractor:
             print(f"Unexpected error for {symbol}: {e}")
             return None, 'fail'
     
-    def transform_income_statement_data(self, symbol, symbol_id, data, status):
-        """Transform income statement data to match database schema."""
+    def transform_cash_flow_data(self, symbol, symbol_id, data, status):
+        """Transform cash flow data to match database schema."""
         current_timestamp = datetime.now().isoformat()
         
         if status == 'fail' or data is None:
@@ -186,7 +186,7 @@ class IncomeStatementExtractor:
                     )
                     records.append(empty_record)
             
-            print(f"Transformed {len(records)} income statement records for {symbol}")
+            print(f"Transformed {len(records)} cash flow records for {symbol}")
             return records
             
         except Exception as e:
@@ -201,29 +201,32 @@ class IncomeStatementExtractor:
             'fiscal_date_ending': None,
             'report_type': report_type,
             'reported_currency': None,
-            'gross_profit': None,
-            'total_revenue': None,
-            'cost_of_revenue': None,
-            'cost_of_goods_and_services_sold': None,
-            'operating_income': None,
-            'selling_general_and_administrative': None,
-            'research_and_development': None,
-            'operating_expenses': None,
-            'investment_income_net': None,
-            'net_interest_income': None,
-            'interest_income': None,
-            'interest_expense': None,
-            'non_interest_income': None,
-            'other_non_operating_income': None,
-            'depreciation': None,
-            'depreciation_and_amortization': None,
-            'income_before_tax': None,
-            'income_tax_expense': None,
-            'interest_and_debt_expense': None,
-            'net_income_from_continuing_operations': None,
-            'comprehensive_income_net_of_tax': None,
-            'ebit': None,
-            'ebitda': None,
+            'operating_cashflow': None,
+            'payments_for_operating_activities': None,
+            'proceeds_from_operating_activities': None,
+            'change_in_operating_liabilities': None,
+            'change_in_operating_assets': None,
+            'depreciation_depletion_and_amortization': None,
+            'capital_expenditures': None,
+            'change_in_receivables': None,
+            'change_in_inventory': None,
+            'profit_loss': None,
+            'cashflow_from_investment': None,
+            'cashflow_from_financing': None,
+            'proceeds_from_repayments_of_short_term_debt': None,
+            'payments_for_repurchase_of_common_stock': None,
+            'payments_for_repurchase_of_equity': None,
+            'payments_for_repurchase_of_preferred_stock': None,
+            'dividend_payout': None,
+            'dividend_payout_common_stock': None,
+            'dividend_payout_preferred_stock': None,
+            'proceeds_from_issuance_of_common_stock': None,
+            'proceeds_from_issuance_of_long_term_debt_and_capital_securities_net': None,
+            'proceeds_from_issuance_of_preferred_stock': None,
+            'proceeds_from_repurchase_of_equity': None,
+            'proceeds_from_sale_of_treasury_stock': None,
+            'change_in_cash_and_cash_equivalents': None,
+            'change_in_exchange_rate': None,
             'net_income': None,
             'api_response_status': api_status,
             'created_at': timestamp,
@@ -231,7 +234,7 @@ class IncomeStatementExtractor:
         }
     
     def _transform_single_report(self, symbol, symbol_id, report, report_type, timestamp):
-        """Transform a single income statement report."""
+        """Transform a single cash flow report."""
         try:
             # Helper function to convert API values to database format
             def convert_value(value):
@@ -248,29 +251,32 @@ class IncomeStatementExtractor:
                 'fiscal_date_ending': report.get('fiscalDateEnding'),
                 'report_type': report_type,
                 'reported_currency': report.get('reportedCurrency'),
-                'gross_profit': convert_value(report.get('grossProfit')),
-                'total_revenue': convert_value(report.get('totalRevenue')),
-                'cost_of_revenue': convert_value(report.get('costOfRevenue')),
-                'cost_of_goods_and_services_sold': convert_value(report.get('costofGoodsAndServicesSold')),
-                'operating_income': convert_value(report.get('operatingIncome')),
-                'selling_general_and_administrative': convert_value(report.get('sellingGeneralAndAdministrative')),
-                'research_and_development': convert_value(report.get('researchAndDevelopment')),
-                'operating_expenses': convert_value(report.get('operatingExpenses')),
-                'investment_income_net': convert_value(report.get('investmentIncomeNet')),
-                'net_interest_income': convert_value(report.get('netInterestIncome')),
-                'interest_income': convert_value(report.get('interestIncome')),
-                'interest_expense': convert_value(report.get('interestExpense')),
-                'non_interest_income': convert_value(report.get('nonInterestIncome')),
-                'other_non_operating_income': convert_value(report.get('otherNonOperatingIncome')),
-                'depreciation': convert_value(report.get('depreciation')),
-                'depreciation_and_amortization': convert_value(report.get('depreciationAndAmortization')),
-                'income_before_tax': convert_value(report.get('incomeBeforeTax')),
-                'income_tax_expense': convert_value(report.get('incomeTaxExpense')),
-                'interest_and_debt_expense': convert_value(report.get('interestAndDebtExpense')),
-                'net_income_from_continuing_operations': convert_value(report.get('netIncomeFromContinuingOperations')),
-                'comprehensive_income_net_of_tax': convert_value(report.get('comprehensiveIncomeNetOfTax')),
-                'ebit': convert_value(report.get('ebit')),
-                'ebitda': convert_value(report.get('ebitda')),
+                'operating_cashflow': convert_value(report.get('operatingCashflow')),
+                'payments_for_operating_activities': convert_value(report.get('paymentsForOperatingActivities')),
+                'proceeds_from_operating_activities': convert_value(report.get('proceedsFromOperatingActivities')),
+                'change_in_operating_liabilities': convert_value(report.get('changeInOperatingLiabilities')),
+                'change_in_operating_assets': convert_value(report.get('changeInOperatingAssets')),
+                'depreciation_depletion_and_amortization': convert_value(report.get('depreciationDepletionAndAmortization')),
+                'capital_expenditures': convert_value(report.get('capitalExpenditures')),
+                'change_in_receivables': convert_value(report.get('changeInReceivables')),
+                'change_in_inventory': convert_value(report.get('changeInInventory')),
+                'profit_loss': convert_value(report.get('profitLoss')),
+                'cashflow_from_investment': convert_value(report.get('cashflowFromInvestment')),
+                'cashflow_from_financing': convert_value(report.get('cashflowFromFinancing')),
+                'proceeds_from_repayments_of_short_term_debt': convert_value(report.get('proceedsFromRepaymentsOfShortTermDebt')),
+                'payments_for_repurchase_of_common_stock': convert_value(report.get('paymentsForRepurchaseOfCommonStock')),
+                'payments_for_repurchase_of_equity': convert_value(report.get('paymentsForRepurchaseOfEquity')),
+                'payments_for_repurchase_of_preferred_stock': convert_value(report.get('paymentsForRepurchaseOfPreferredStock')),
+                'dividend_payout': convert_value(report.get('dividendPayout')),
+                'dividend_payout_common_stock': convert_value(report.get('dividendPayoutCommonStock')),
+                'dividend_payout_preferred_stock': convert_value(report.get('dividendPayoutPreferredStock')),
+                'proceeds_from_issuance_of_common_stock': convert_value(report.get('proceedsFromIssuanceOfCommonStock')),
+                'proceeds_from_issuance_of_long_term_debt_and_capital_securities_net': convert_value(report.get('proceedsFromIssuanceOfLongTermDebtAndCapitalSecuritiesNet')),
+                'proceeds_from_issuance_of_preferred_stock': convert_value(report.get('proceedsFromIssuanceOfPreferredStock')),
+                'proceeds_from_repurchase_of_equity': convert_value(report.get('proceedsFromRepurchaseOfEquity')),
+                'proceeds_from_sale_of_treasury_stock': convert_value(report.get('proceedsFromSaleOfTreasuryStock')),
+                'change_in_cash_and_cash_equivalents': convert_value(report.get('changeInCashAndCashEquivalents')),
+                'change_in_exchange_rate': convert_value(report.get('changeInExchangeRate')),
                 'net_income': convert_value(report.get('netIncome')),
                 'api_response_status': 'pass',
                 'created_at': timestamp,
@@ -288,8 +294,8 @@ class IncomeStatementExtractor:
             print(f"Error transforming single report for {symbol}: {e}")
             return None
     
-    def load_income_statement_data(self, records):
-        """Load income statement records into the database."""
+    def load_cash_flow_data(self, records):
+        """Load cash flow records into the database."""
         if not records:
             print("No records to load")
             return
@@ -299,7 +305,7 @@ class IncomeStatementExtractor:
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
             schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
-            if not db.table_exists('income_statement'):
+            if not db.table_exists('cash_flow'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
             
@@ -307,7 +313,7 @@ class IncomeStatementExtractor:
             columns = list(records[0].keys())
             placeholders = ', '.join(['?' for _ in columns])
             insert_query = f"""
-                INSERT OR REPLACE INTO income_statement ({', '.join(columns)}) 
+                INSERT OR REPLACE INTO cash_flow ({', '.join(columns)}) 
                 VALUES ({placeholders})
             """
             
@@ -316,7 +322,7 @@ class IncomeStatementExtractor:
             
             # Execute bulk insert
             rows_affected = db.execute_many(insert_query, record_tuples)
-            print(f"Successfully loaded {rows_affected} records into income_statement table")
+            print(f"Successfully loaded {rows_affected} records into cash_flow table")
     
     def run_etl_incremental(self, exchange_filter=None, limit=None):
         """Run ETL only for symbols not yet processed.
@@ -325,7 +331,7 @@ class IncomeStatementExtractor:
             exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
             limit: Maximum number of symbols to process (for chunking)
         """
-        print("Starting Incremental Income Statement ETL process...")
+        print("Starting Incremental Cash Flow ETL process...")
         print(f"Configuration: exchange={exchange_filter}, limit={limit}")
         
         try:
@@ -347,14 +353,14 @@ class IncomeStatementExtractor:
                 
                 try:
                     # Extract data for this symbol
-                    data, status = self.extract_single_income_statement(symbol)
+                    data, status = self.extract_single_cash_flow(symbol)
                     
                     # Transform data
-                    records = self.transform_income_statement_data(symbol, symbol_id, data, status)
+                    records = self.transform_cash_flow_data(symbol, symbol_id, data, status)
                     
                     if records:
                         # Load records for this symbol
-                        self.load_income_statement_data(records)
+                        self.load_cash_flow_data(records)
                         total_records += len(records)
                         success_count += 1
                         print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
@@ -378,8 +384,8 @@ class IncomeStatementExtractor:
                 base_query = """
                     SELECT COUNT(DISTINCT ls.symbol_id)
                     FROM listing_status ls 
-                    LEFT JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
-                    WHERE ls.asset_type = 'Stock' AND inc.symbol_id IS NULL
+                    LEFT JOIN cash_flow cf ON ls.symbol_id = cf.symbol_id 
+                    WHERE ls.asset_type = 'Stock' AND cf.symbol_id IS NULL
                 """
                 params = []
                 
@@ -396,7 +402,7 @@ class IncomeStatementExtractor:
             
             # Print summary
             print(f"\n" + "="*50)
-            print(f"Incremental Income Statement ETL Summary:")
+            print(f"Incremental Cash Flow ETL Summary:")
             print(f"  Exchange: {exchange_filter or 'All exchanges'}")
             print(f"  Total symbols processed: {len(symbols)}")
             print(f"  Successful symbols: {success_count}")
@@ -406,10 +412,10 @@ class IncomeStatementExtractor:
             print(f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}")
             print(f"="*50)
             
-            print("Incremental Income Statement ETL process completed successfully!")
+            print("Incremental Cash Flow ETL process completed successfully!")
             
         except Exception as e:
-            print(f"Incremental Income Statement ETL process failed: {e}")
+            print(f"Incremental Cash Flow ETL process failed: {e}")
             raise
 
     def load_symbols_for_update(self, exchange_filter=None, limit=None, min_age_days=90):
@@ -422,7 +428,7 @@ class IncomeStatementExtractor:
         """
         with self.db_manager as db:
             # First ensure the table exists, or create the schema
-            if not db.table_exists('income_statement'):
+            if not db.table_exists('cash_flow'):
                 # Initialize schema to create the table
                 schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
                 db.initialize_schema(schema_path)
@@ -430,12 +436,12 @@ class IncomeStatementExtractor:
             
             # Find symbols that haven't been updated recently
             base_query = """
-                SELECT ls.symbol_id, ls.symbol, MAX(inc.updated_at) as last_updated
+                SELECT ls.symbol_id, ls.symbol, MAX(cf.updated_at) as last_updated
                 FROM listing_status ls 
-                INNER JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
+                INNER JOIN cash_flow cf ON ls.symbol_id = cf.symbol_id 
                 WHERE ls.asset_type = 'Stock' 
-                  AND (inc.updated_at IS NULL OR 
-                       datetime(inc.updated_at) < datetime('now', '-{} days'))
+                  AND (cf.updated_at IS NULL OR 
+                       datetime(cf.updated_at) < datetime('now', '-{} days'))
             """.format(min_age_days)
             
             params = []
@@ -466,7 +472,7 @@ class IncomeStatementExtractor:
             limit: Maximum number of symbols to process (for chunking)
             min_age_days: Minimum days since last update (default 90 days for quarterly updates)
         """
-        print("Starting Income Statement UPDATE ETL process...")
+        print("Starting Cash Flow UPDATE ETL process...")
         print(f"Configuration: exchange={exchange_filter}, limit={limit}, min_age_days={min_age_days}")
         
         try:
@@ -488,20 +494,20 @@ class IncomeStatementExtractor:
                 
                 try:
                     # Extract fresh data for this symbol
-                    data, status = self.extract_single_income_statement(symbol)
+                    data, status = self.extract_single_cash_flow(symbol)
                     
                     # Transform data
-                    records = self.transform_income_statement_data(symbol, symbol_id, data, status)
+                    records = self.transform_cash_flow_data(symbol, symbol_id, data, status)
                     
                     if records:
                         # Delete existing records for this symbol before inserting fresh data
                         with DatabaseManager(self.db_manager.db_path) as db:
-                            delete_query = "DELETE FROM income_statement WHERE symbol_id = ?"
+                            delete_query = "DELETE FROM cash_flow WHERE symbol_id = ?"
                             db.execute_query(delete_query, (symbol_id,))
                             print(f"Deleted existing records for {symbol}")
                         
                         # Load fresh records for this symbol
-                        self.load_income_statement_data(records)
+                        self.load_cash_flow_data(records)
                         total_records += len(records)
                         success_count += 1
                         print(f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
@@ -521,7 +527,7 @@ class IncomeStatementExtractor:
             
             # Print summary
             print(f"\n" + "="*50)
-            print(f"Income Statement UPDATE ETL Summary:")
+            print(f"Cash Flow UPDATE ETL Summary:")
             print(f"  Exchange: {exchange_filter or 'All exchanges'}")
             print(f"  Total symbols updated: {len(symbols)}")
             print(f"  Successful updates: {success_count}")
@@ -530,10 +536,10 @@ class IncomeStatementExtractor:
             print(f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}")
             print(f"="*50)
             
-            print("Income Statement UPDATE ETL process completed successfully!")
+            print("Cash Flow UPDATE ETL process completed successfully!")
             
         except Exception as e:
-            print(f"Income Statement UPDATE ETL process failed: {e}")
+            print(f"Cash Flow UPDATE ETL process failed: {e}")
             raise
 
     def run_etl_latest_periods(self, exchange_filter=None, limit=None, periods_back=4):
@@ -545,20 +551,20 @@ class IncomeStatementExtractor:
             limit: Maximum number of symbols to process
             periods_back: Number of latest periods to keep (default 4 = 1 year of quarters)
         """
-        print("Starting Income Statement LATEST PERIODS ETL process...")
+        print("Starting Cash Flow LATEST PERIODS ETL process...")
         print(f"Configuration: exchange={exchange_filter}, limit={limit}, periods_back={periods_back}")
         
         try:
-            # Load symbols that already exist in the income_statement table
+            # Load symbols that already exist in the cash_flow table
             with self.db_manager as db:
-                if not db.table_exists('income_statement'):
-                    print("Income statement table doesn't exist. Use run_etl_incremental first.")
+                if not db.table_exists('cash_flow'):
+                    print("Cash flow table doesn't exist. Use run_etl_incremental first.")
                     return
                 
                 base_query = """
                     SELECT DISTINCT ls.symbol_id, ls.symbol 
                     FROM listing_status ls 
-                    INNER JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
+                    INNER JOIN cash_flow cf ON ls.symbol_id = cf.symbol_id 
                     WHERE ls.asset_type = 'Stock'
                 """
                 params = []
@@ -595,7 +601,7 @@ class IncomeStatementExtractor:
                 
                 try:
                     # Extract fresh data for this symbol
-                    data, status = self.extract_single_income_statement(symbol)
+                    data, status = self.extract_single_cash_flow(symbol)
                     
                     if status == 'pass' and data:
                         # Keep only the latest periods for each report type
@@ -628,16 +634,16 @@ class IncomeStatementExtractor:
                             filtered_data['quarterlyReports'] = data.get('quarterlyReports', [])
                         
                         # Transform filtered data
-                        records = self.transform_income_statement_data(symbol, symbol_id, filtered_data, status)
+                        records = self.transform_cash_flow_data(symbol, symbol_id, filtered_data, status)
                         
                         if records:
                             # Delete existing records for this symbol before inserting fresh data
                             with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM income_statement WHERE symbol_id = ?"
+                                delete_query = "DELETE FROM cash_flow WHERE symbol_id = ?"
                                 db.execute_query(delete_query, (symbol_id,))
                             
                             # Load latest period records for this symbol
-                            self.load_income_statement_data(records)
+                            self.load_cash_flow_data(records)
                             total_records += len(records)
                             success_count += 1
                             print(f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} latest records [{i+1}/{len(symbols)}]")
@@ -646,14 +652,14 @@ class IncomeStatementExtractor:
                             print(f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
                     else:
                         # Handle failed extractions
-                        records = self.transform_income_statement_data(symbol, symbol_id, data, status)
+                        records = self.transform_cash_flow_data(symbol, symbol_id, data, status)
                         if records:
                             # Delete and replace with error records
                             with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM income_statement WHERE symbol_id = ?"
+                                delete_query = "DELETE FROM cash_flow WHERE symbol_id = ?"
                                 db.execute_query(delete_query, (symbol_id,))
-                            self.load_income_statement_data(records)
-                            total_records += len(records)
+                        self.load_cash_flow_data(records)
+                        total_records += len(records)
                         fail_count += 1
                         print(f"✗ Failed to get data for {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}]")
                     
@@ -669,7 +675,7 @@ class IncomeStatementExtractor:
             
             # Print summary
             print(f"\n" + "="*50)
-            print(f"Income Statement LATEST PERIODS ETL Summary:")
+            print(f"Cash Flow LATEST PERIODS ETL Summary:")
             print(f"  Exchange: {exchange_filter or 'All exchanges'}")
             print(f"  Total symbols processed: {len(symbols)}")
             print(f"  Successful updates: {success_count}")
@@ -679,21 +685,22 @@ class IncomeStatementExtractor:
             print(f"  Periods kept per symbol: {periods_back}")
             print(f"="*50)
             
-            print("Income Statement LATEST PERIODS ETL process completed successfully!")
+            print("Cash Flow LATEST PERIODS ETL process completed successfully!")
             
         except Exception as e:
-            print(f"Income Statement LATEST PERIODS ETL process failed: {e}")
+            print(f"Cash Flow LATEST PERIODS ETL process failed: {e}")
             raise
+
 def main():
-    """Main function to run the income statement extraction."""
+    """Main function to run the cash flow extraction."""
     
-    extractor = IncomeStatementExtractor()
+    extractor = CashFlowExtractor()
     
     # Configuration options for different use cases:
     
     # === INITIAL DATA COLLECTION ===
-    # Option 1: Initial income statement data collection (recommended for first run)
-    extractor.run_etl_incremental(exchange_filter='NYSE', limit=5)
+    # Option 1: Initial cash flow data collection (recommended for first run)
+    extractor.run_etl_incremental(exchange_filter='NYSE', limit=2700)
     
     # Option 2: Process NYSE symbols
     # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
