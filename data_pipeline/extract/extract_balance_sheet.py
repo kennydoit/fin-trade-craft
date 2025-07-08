@@ -13,14 +13,14 @@ from pathlib import Path
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 STOCK_API_FUNCTION = "BALANCE_SHEET"
 
 class BalanceSheetExtractor:
     """Extract and load balance sheet data from Alpha Vantage API."""
     
-    def __init__(self, db_path="db/stock_db.db"):
+    def __init__(self):
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
@@ -28,7 +28,7 @@ class BalanceSheetExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
         
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
@@ -42,15 +42,15 @@ class BalanceSheetExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND exchange = ?"
+                    base_query += " AND exchange = %s"
                     params.append(exchange_filter)
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -62,7 +62,7 @@ class BalanceSheetExtractor:
             # First ensure the table exists, or create the schema
             if not db.table_exists('balance_sheet'):
                 # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
                 db.initialize_schema(schema_path)
             
             # Now we can safely query with LEFT JOIN
@@ -76,17 +76,17 @@ class BalanceSheetExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND ls.exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND ls.exchange = ?"
+                    base_query += " AND ls.exchange = %s"
                     params.append(exchange_filter)
             
             base_query += " GROUP BY ls.symbol_id, ls.symbol"
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -312,7 +312,7 @@ class BalanceSheetExtractor:
             print(f"Error transforming single report for {symbol}: {e}")
             return None
     
-    def load_balance_sheet_data(self, records):
+    def load_balance_sheet_data(self, records, db_connection=None):
         """Load balance sheet records into the database."""
         if not records:
             print("No records to load")
@@ -320,18 +320,19 @@ class BalanceSheetExtractor:
         
         print(f"Loading {len(records)} records into database...")
         
-        with DatabaseManager(self.db_manager.db_path) as db:
-            # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+        # Use provided connection or create new one
+        if db_connection:
+            # Use existing connection
+            db = db_connection
+            # The table should already exist from load_unprocessed_symbols
             if not db.table_exists('balance_sheet'):
-                print("Initializing database schema...")
-                db.initialize_schema(schema_path)
+                raise Exception("balance_sheet table does not exist. Please check database schema.")
             
-            # Prepare insert query
+            # Prepare insert query - use simple INSERT since there's no proper unique constraint
             columns = list(records[0].keys())
-            placeholders = ', '.join(['?' for _ in columns])
+            placeholders = ', '.join(['%s' for _ in columns])
             insert_query = f"""
-                INSERT OR REPLACE INTO balance_sheet ({', '.join(columns)}) 
+                INSERT INTO balance_sheet ({', '.join(columns)}) 
                 VALUES ({placeholders})
             """
             
@@ -341,6 +342,10 @@ class BalanceSheetExtractor:
             # Execute bulk insert
             rows_affected = db.execute_many(insert_query, record_tuples)
             print(f"Successfully loaded {rows_affected} records into balance_sheet table")
+        else:
+            # Create new connection (fallback)
+            with self.db_manager as db:
+                self.load_balance_sheet_data(records, db)
     
     def run_etl_incremental(self, exchange_filter=None, limit=None):
         """Run ETL only for symbols not yet processed.
@@ -353,51 +358,82 @@ class BalanceSheetExtractor:
         print(f"Configuration: exchange={exchange_filter}, limit={limit}")
         
         try:
-            # Load only unprocessed symbols
-            symbol_mapping = self.load_unprocessed_symbols(exchange_filter, limit)
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} unprocessed symbols")
-            
-            if not symbols:
-                print("No unprocessed symbols found")
-                return
-            
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+            # Use a single database connection throughout the entire process
+            with self.db_manager as db:
+                # Ensure the table exists first
+                if not db.table_exists('balance_sheet'):
+                    # Initialize schema to create the table
+                    schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+                    db.initialize_schema(schema_path)
                 
-                try:
-                    # Extract data for this symbol
-                    data, status = self.extract_single_balance_sheet(symbol)
-                    
-                    # Transform data
-                    records = self.transform_balance_sheet_data(symbol, symbol_id, data, status)
-                    
-                    if records:
-                        # Load records for this symbol
-                        self.load_balance_sheet_data(records)
-                        total_records += len(records)
-                        success_count += 1
-                        print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
+                # Load only unprocessed symbols
+                base_query = """
+                    SELECT ls.symbol_id, ls.symbol 
+                    FROM listing_status ls 
+                    LEFT JOIN balance_sheet bs ON ls.symbol_id = bs.symbol_id 
+                    WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
+                """
+                params = []
+                
+                if exchange_filter:
+                    if isinstance(exchange_filter, list):
+                        placeholders = ','.join(['%s' for _ in exchange_filter])
+                        base_query += f" AND ls.exchange IN ({placeholders})"
+                        params.extend(exchange_filter)
                     else:
-                        fail_count += 1
-                        print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
-                    
-                except Exception as e:
-                    fail_count += 1
-                    print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
-                    # Continue processing other symbols even if one fails
-                    continue
+                        base_query += " AND ls.exchange = %s"
+                        params.append(exchange_filter)
                 
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
-            
-            # Get remaining symbols count for summary
-            with DatabaseManager(self.db_manager.db_path) as db:
+                base_query += " GROUP BY ls.symbol_id, ls.symbol"
+                
+                if limit:
+                    base_query += " LIMIT %s"
+                    params.append(limit)
+                
+                result = db.fetch_query(base_query, params)
+                symbol_mapping = {row[1]: row[0] for row in result}
+                
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} unprocessed symbols")
+                
+                if not symbols:
+                    print("No unprocessed symbols found")
+                    return
+                
+                total_records = 0
+                success_count = 0
+                fail_count = 0
+                
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
+                    
+                    try:
+                        # Extract data for this symbol
+                        data, status = self.extract_single_balance_sheet(symbol)
+                        
+                        # Transform data
+                        records = self.transform_balance_sheet_data(symbol, symbol_id, data, status)
+                        
+                        if records:
+                            # Load records for this symbol using the same database connection
+                            self.load_balance_sheet_data(records, db)
+                            total_records += len(records)
+                            success_count += 1
+                            print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
+                        else:
+                            fail_count += 1
+                            print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        
+                    except Exception as e:
+                        fail_count += 1
+                        print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
+                        # Continue processing other symbols even if one fails
+                        continue
+                    
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
+                
                 # Count remaining unprocessed symbols
                 base_query = """
                     SELECT COUNT(DISTINCT ls.symbol_id)
@@ -409,11 +445,11 @@ class BalanceSheetExtractor:
                 
                 if exchange_filter:
                     if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['?' for _ in exchange_filter])
+                        placeholders = ','.join(['%s' for _ in exchange_filter])
                         base_query += f" AND ls.exchange IN ({placeholders})"
                         params.extend(exchange_filter)
                     else:
-                        base_query += " AND ls.exchange = ?"
+                        base_query += " AND ls.exchange = %s"
                         params.append(exchange_filter)
                 
                 remaining_count = db.fetch_query(base_query, params)[0][0]
@@ -448,7 +484,7 @@ class BalanceSheetExtractor:
             # First ensure the table exists, or create the schema
             if not db.table_exists('balance_sheet'):
                 # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
                 db.initialize_schema(schema_path)
                 return {}  # No symbols to update if table was just created
             
@@ -466,17 +502,17 @@ class BalanceSheetExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND ls.exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND ls.exchange = ?"
+                    base_query += " AND ls.exchange = %s"
                     params.append(exchange_filter)
             
             base_query += " GROUP BY ls.symbol_id, ls.symbol"
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -519,8 +555,8 @@ class BalanceSheetExtractor:
                     
                     if records:
                         # Delete existing records for this symbol before inserting fresh data
-                        with DatabaseManager(self.db_manager.db_path) as db:
-                            delete_query = "DELETE FROM balance_sheet WHERE symbol_id = ?"
+                        with self.db_manager as db:
+                            delete_query = "DELETE FROM balance_sheet WHERE symbol_id = %s"
                             db.execute_query(delete_query, (symbol_id,))
                             print(f"Deleted existing records for {symbol}")
                         
@@ -589,15 +625,15 @@ class BalanceSheetExtractor:
                 
                 if exchange_filter:
                     if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['?' for _ in exchange_filter])
+                        placeholders = ','.join(['%s' for _ in exchange_filter])
                         base_query += f" AND ls.exchange IN ({placeholders})"
                         params.extend(exchange_filter)
                     else:
-                        base_query += " AND ls.exchange = ?"
+                        base_query += " AND ls.exchange = %s"
                         params.append(exchange_filter)
                 
                 if limit:
-                    base_query += " LIMIT ?"
+                    base_query += " LIMIT %s"
                     params.append(limit)
                 
                 result = db.fetch_query(base_query, params)
@@ -656,8 +692,8 @@ class BalanceSheetExtractor:
                         
                         if records:
                             # Delete existing records for this symbol before inserting fresh data
-                            with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM balance_sheet WHERE symbol_id = ?"
+                            with self.db_manager as db:
+                                delete_query = "DELETE FROM balance_sheet WHERE symbol_id = %s"
                                 db.execute_query(delete_query, (symbol_id,))
                             
                             # Load latest period records for this symbol
@@ -673,8 +709,8 @@ class BalanceSheetExtractor:
                         records = self.transform_balance_sheet_data(symbol, symbol_id, data, status)
                         if records:
                             # Delete and replace with error records
-                            with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM balance_sheet WHERE symbol_id = ?"
+                            with self.db_manager as db:
+                                delete_query = "DELETE FROM balance_sheet WHERE symbol_id = %s"
                                 db.execute_query(delete_query, (symbol_id,))
                             self.load_balance_sheet_data(records)
                             total_records += len(records)
@@ -717,8 +753,9 @@ def main():
     
     # === INITIAL DATA COLLECTION ===
     # Option 1: Initial balance sheet data collection (recommended for first run)
-    extractor.run_etl_incremental(exchange_filter='NYSE', limit=5)
-    
+    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=3500)
+    extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=6000)
+    # 
     # Option 2: Process NYSE symbols
     # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
     

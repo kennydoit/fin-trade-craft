@@ -13,14 +13,14 @@ from pathlib import Path
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 API_FUNCTION = "OVERVIEW"
 
 class OverviewExtractor:
     """Extract and load company overview data from Alpha Vantage API."""
     
-    def __init__(self, db_path="db/stock_db.db"):
+    def __init__(self):
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
@@ -28,7 +28,7 @@ class OverviewExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
         
         # Rate limiting: 75 requests per minute for Alpha Vantage
@@ -42,15 +42,15 @@ class OverviewExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND exchange = ?"
+                    base_query += " AND exchange = %s"
                     params.append(exchange_filter)
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -144,27 +144,24 @@ class OverviewExtractor:
         print(f"Loading {len(records)} records into database...")
         
         # Use a fresh database manager instance for loading
-        with DatabaseManager(self.db_manager.db_path) as db:
+        db_manager = PostgresDatabaseManager()
+        with db_manager as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('overview'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
             
-            # Prepare insert query - use INSERT OR REPLACE based on symbol_id
-            columns = list(records[0].keys())
-            placeholders = ', '.join(['?' for _ in columns])
-            insert_query = f"""
-                INSERT OR REPLACE INTO overview ({', '.join(columns)}) 
-                VALUES ({placeholders})
-            """
+            # Use PostgreSQL upsert functionality
+            for record in records:
+                # Remove timestamp columns for upsert - they'll be handled by the database
+                data_dict = record.copy()
+                data_dict.pop('created_at', None)
+                data_dict.pop('updated_at', None)
+                
+                db.upsert_data('overview', data_dict, ['symbol_id'])
             
-            # Convert records to list of tuples
-            record_tuples = [tuple(record[col] for col in columns) for record in records]
-            
-            # Execute bulk insert
-            rows_affected = db.execute_many(insert_query, record_tuples)
-            print(f"Successfully loaded {rows_affected} records into overview table")
+            print(f"Successfully loaded {len(records)} records into overview table")
     
     def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet (not in overview table)."""
@@ -179,15 +176,15 @@ class OverviewExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND ls.exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND ls.exchange = ?"
+                    base_query += " AND ls.exchange = %s"
                     params.append(exchange_filter)
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -307,14 +304,14 @@ def main():
     extractor.run_etl_incremental(exchange_filter='NYSE', limit=695)
 
     # Add this to check remaining symbols before running
-    with DatabaseManager('db/stock_db.db') as db:
+    with PostgresDatabaseManager() as db:
         remaining = db.fetch_query("""
             SELECT COUNT(*) 
             FROM listing_status ls 
             LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
             WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
-            AND ls.exchange = 'NYSE'
-        """)[0][0]
+            AND ls.exchange = %s
+        """, ('NYSE',))[0][0]
         print(f"Remaining NYSE symbols to process: {remaining}")
 
 if __name__ == "__main__":

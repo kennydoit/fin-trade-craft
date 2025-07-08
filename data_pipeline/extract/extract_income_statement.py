@@ -13,14 +13,14 @@ from pathlib import Path
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 STOCK_API_FUNCTION = "INCOME_STATEMENT"
 
 class IncomeStatementExtractor:
     """Extract and load income statement data from Alpha Vantage API."""
     
-    def __init__(self, db_path="db/stock_db.db"):
+    def __init__(self):
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
@@ -28,7 +28,7 @@ class IncomeStatementExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
         
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
@@ -42,15 +42,15 @@ class IncomeStatementExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND exchange = ?"
+                    base_query += " AND exchange = %s"
                     params.append(exchange_filter)
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -62,7 +62,7 @@ class IncomeStatementExtractor:
             # First ensure the table exists, or create the schema
             if not db.table_exists('income_statement'):
                 # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
                 db.initialize_schema(schema_path)
             
             # Now we can safely query with LEFT JOIN
@@ -76,17 +76,17 @@ class IncomeStatementExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND ls.exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND ls.exchange = ?"
+                    base_query += " AND ls.exchange = %s"
                     params.append(exchange_filter)
             
             base_query += " GROUP BY ls.symbol_id, ls.symbol"
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -298,14 +298,14 @@ class IncomeStatementExtractor:
         
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('income_statement'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
             
             # Prepare insert query
             columns = list(records[0].keys())
-            placeholders = ', '.join(['?' for _ in columns])
+            placeholders = ', '.join(['%s' for _ in columns])
             insert_query = f"""
                 INSERT OR REPLACE INTO income_statement ({', '.join(columns)}) 
                 VALUES ({placeholders})
@@ -385,11 +385,11 @@ class IncomeStatementExtractor:
                 
                 if exchange_filter:
                     if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['?' for _ in exchange_filter])
+                        placeholders = ','.join(['%s' for _ in exchange_filter])
                         base_query += f" AND ls.exchange IN ({placeholders})"
                         params.extend(exchange_filter)
                     else:
-                        base_query += " AND ls.exchange = ?"
+                        base_query += " AND ls.exchange = %s"
                         params.append(exchange_filter)
                 
                 remaining_count = db.fetch_query(base_query, params)[0][0]
@@ -424,7 +424,7 @@ class IncomeStatementExtractor:
             # First ensure the table exists, or create the schema
             if not db.table_exists('income_statement'):
                 # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
                 db.initialize_schema(schema_path)
                 return {}  # No symbols to update if table was just created
             
@@ -442,17 +442,17 @@ class IncomeStatementExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND ls.exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND ls.exchange = ?"
+                    base_query += " AND ls.exchange = %s"
                     params.append(exchange_filter)
             
             base_query += " GROUP BY ls.symbol_id, ls.symbol"
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -496,7 +496,7 @@ class IncomeStatementExtractor:
                     if records:
                         # Delete existing records for this symbol before inserting fresh data
                         with DatabaseManager(self.db_manager.db_path) as db:
-                            delete_query = "DELETE FROM income_statement WHERE symbol_id = ?"
+                            delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
                             db.execute_query(delete_query, (symbol_id,))
                             print(f"Deleted existing records for {symbol}")
                         
@@ -565,15 +565,15 @@ class IncomeStatementExtractor:
                 
                 if exchange_filter:
                     if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['?' for _ in exchange_filter])
+                        placeholders = ','.join(['%s' for _ in exchange_filter])
                         base_query += f" AND ls.exchange IN ({placeholders})"
                         params.extend(exchange_filter)
                     else:
-                        base_query += " AND ls.exchange = ?"
+                        base_query += " AND ls.exchange = %s"
                         params.append(exchange_filter)
                 
                 if limit:
-                    base_query += " LIMIT ?"
+                    base_query += " LIMIT %s"
                     params.append(limit)
                 
                 result = db.fetch_query(base_query, params)
@@ -633,7 +633,7 @@ class IncomeStatementExtractor:
                         if records:
                             # Delete existing records for this symbol before inserting fresh data
                             with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM income_statement WHERE symbol_id = ?"
+                                delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
                                 db.execute_query(delete_query, (symbol_id,))
                             
                             # Load latest period records for this symbol
@@ -650,7 +650,7 @@ class IncomeStatementExtractor:
                         if records:
                             # Delete and replace with error records
                             with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM income_statement WHERE symbol_id = ?"
+                                delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
                                 db.execute_query(delete_query, (symbol_id,))
                             self.load_income_statement_data(records)
                             total_records += len(records)
