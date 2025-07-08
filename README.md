@@ -23,7 +23,7 @@
   <img src="assets\images\pgsql.png" alt="Logo" height="75">
 </div>
 <div style="background:white; display:inline-block; padding:5px;">
-  <img src="assets\images\av2.png" alt="Logo" height="75">
+  <img src="assets\images\avwht.png" alt="Logo" height="75">
 </div>
 
 <br>
