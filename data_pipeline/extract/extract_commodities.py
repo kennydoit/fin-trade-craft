@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 # Commodity configurations: function_name -> (interval, display_name)
 COMMODITY_CONFIGS = {
@@ -33,7 +33,7 @@ COMMODITY_CONFIGS = {
 class CommoditiesExtractor:
     """Extract and load commodities data from Alpha Vantage API."""
     
-    def __init__(self, db_path="db/stock_db.db"):
+    def __init__(self):
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
@@ -41,7 +41,7 @@ class CommoditiesExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
         
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
@@ -53,7 +53,7 @@ class CommoditiesExtractor:
             query = """
                 SELECT date 
                 FROM commodities 
-                WHERE commodity_name = ? AND interval = ? AND api_response_status = 'data'
+                WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
                 ORDER BY date DESC
             """
             result = db.fetch_query(query, (commodity_name, interval))
@@ -65,7 +65,7 @@ class CommoditiesExtractor:
             query = """
                 SELECT MAX(date) 
                 FROM commodities 
-                WHERE commodity_name = ? AND interval = ? AND api_response_status = 'data'
+                WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
             """
             result = db.fetch_query(query, (commodity_name, interval))
             return result[0][0] if result and result[0] and result[0][0] else None
@@ -175,7 +175,7 @@ class CommoditiesExtractor:
         # Insert data
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('commodities'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
@@ -183,7 +183,7 @@ class CommoditiesExtractor:
             insert_query = """
                 INSERT OR IGNORE INTO commodities 
                 (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             inserted_count = db.execute_many(insert_query, records)
@@ -195,7 +195,7 @@ class CommoditiesExtractor:
         """Record extraction status (empty/error/pass) in database."""
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('commodities'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
@@ -203,8 +203,8 @@ class CommoditiesExtractor:
             # Check if status record already exists
             check_query = """
                 SELECT commodity_id FROM commodities 
-                WHERE commodity_name = ? AND function_name = ? AND interval = ? 
-                AND api_response_status = ? AND date IS NULL
+                WHERE commodity_name = %s AND function_name = %s AND interval = %s 
+                AND api_response_status = %s AND date IS NULL
             """
             existing = db.fetch_query(check_query, (commodity_name, function_name, interval, status))
             
@@ -216,7 +216,7 @@ class CommoditiesExtractor:
             insert_query = """
                 INSERT INTO commodities 
                 (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
-                VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?)
+                VALUES (%s, %s, NULL, %s, NULL, NULL, %s, %s)
             """
             
             db.execute_query(insert_query, (commodity_name, function_name, interval, message, status))
@@ -317,7 +317,7 @@ class CommoditiesExtractor:
                 FROM commodities 
                 WHERE api_response_status = 'data'
                 GROUP BY commodity_name, function_name
-                HAVING last_date IS NULL OR last_date <= ?
+                HAVING last_date IS NULL OR last_date <= %s
             """
             result = db.fetch_query(query, (threshold_date,))
             

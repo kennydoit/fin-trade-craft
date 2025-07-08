@@ -16,7 +16,7 @@ from io import StringIO
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 STOCK_API_FUNCTION = "TIME_SERIES_DAILY_ADJUSTED"
 DATATYPE = "csv"
@@ -33,7 +33,7 @@ class TimeSeriesExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
         self.output_size = output_size  # "full" for historical, "compact" for recent
         
@@ -48,15 +48,15 @@ class TimeSeriesExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND exchange = ?"
+                    base_query += " AND exchange = %s"
                     params.append(exchange_filter)
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -68,7 +68,7 @@ class TimeSeriesExtractor:
             # First ensure the table exists, or create the schema
             if not db.table_exists('time_series_daily_adjusted'):
                 # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
                 db.initialize_schema(schema_path)
             
             # Now we can safely query with LEFT JOIN
@@ -82,17 +82,17 @@ class TimeSeriesExtractor:
             
             if exchange_filter:
                 if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['?' for _ in exchange_filter])
+                    placeholders = ','.join(['%s' for _ in exchange_filter])
                     base_query += f" AND ls.exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND ls.exchange = ?"
+                    base_query += " AND ls.exchange = %s"
                     params.append(exchange_filter)
             
             base_query += " GROUP BY ls.symbol_id, ls.symbol"
             
             if limit:
-                base_query += " LIMIT ?"
+                base_query += " LIMIT %s"
                 params.append(limit)
             
             result = db.fetch_query(base_query, params)
@@ -217,14 +217,14 @@ class TimeSeriesExtractor:
         
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('time_series_daily_adjusted'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
             
             # Prepare insert query
             columns = list(records[0].keys())
-            placeholders = ', '.join(['?' for _ in columns])
+            placeholders = ', '.join(['%s' for _ in columns])
             insert_query = f"""
                 INSERT OR REPLACE INTO time_series_daily_adjusted ({', '.join(columns)}) 
                 VALUES ({placeholders})
@@ -308,11 +308,11 @@ class TimeSeriesExtractor:
                 
                 if exchange_filter:
                     if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['?' for _ in exchange_filter])
+                        placeholders = ','.join(['%s' for _ in exchange_filter])
                         base_query += f" AND ls.exchange IN ({placeholders})"
                         params.extend(exchange_filter)
                     else:
-                        base_query += " AND ls.exchange = ?"
+                        base_query += " AND ls.exchange = %s"
                         params.append(exchange_filter)
                 
                 remaining_count = db.fetch_query(base_query, params)[0][0]

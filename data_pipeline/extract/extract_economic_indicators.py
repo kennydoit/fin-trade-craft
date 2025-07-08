@@ -13,7 +13,7 @@ from pathlib import Path
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 # Economic indicator configurations: function_name -> (interval, display_name, maturity)
 # For Treasury yields, maturity is specified; for others, it's None
@@ -38,7 +38,7 @@ ECONOMIC_INDICATOR_CONFIGS = {
 class EconomicIndicatorsExtractor:
     """Extract and load economic indicators data from Alpha Vantage API."""
     
-    def __init__(self, db_path="db/stock_db.db"):
+    def __init__(self):
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
@@ -46,7 +46,7 @@ class EconomicIndicatorsExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
         
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
@@ -58,9 +58,9 @@ class EconomicIndicatorsExtractor:
             query = """
                 SELECT date 
                 FROM economic_indicators 
-                WHERE economic_indicator_name = ? AND function_name = ? 
-                  AND interval = ? AND api_response_status = 'data'
-                  AND (maturity = ? OR (maturity IS NULL AND ? IS NULL))
+                WHERE economic_indicator_name = %s AND function_name = %s 
+                  AND interval = %s AND api_response_status = 'data'
+                  AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
                 ORDER BY date DESC
             """
             result = db.fetch_query(query, (indicator_name, function_name, interval, maturity, maturity))
@@ -72,9 +72,9 @@ class EconomicIndicatorsExtractor:
             query = """
                 SELECT MAX(date) 
                 FROM economic_indicators 
-                WHERE economic_indicator_name = ? AND function_name = ? 
-                  AND interval = ? AND api_response_status = 'data'
-                  AND (maturity = ? OR (maturity IS NULL AND ? IS NULL))
+                WHERE economic_indicator_name = %s AND function_name = %s 
+                  AND interval = %s AND api_response_status = 'data'
+                  AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
             """
             result = db.fetch_query(query, (indicator_name, function_name, interval, maturity, maturity))
             return result[0][0] if result and result[0] and result[0][0] else None
@@ -199,7 +199,7 @@ class EconomicIndicatorsExtractor:
         # Insert data
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('economic_indicators'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
@@ -207,7 +207,7 @@ class EconomicIndicatorsExtractor:
             insert_query = """
                 INSERT OR IGNORE INTO economic_indicators 
                 (economic_indicator_name, function_name, maturity, date, interval, unit, value, name, api_response_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """
             
             inserted_count = db.execute_many(insert_query, records)
@@ -219,7 +219,7 @@ class EconomicIndicatorsExtractor:
         """Record extraction status (empty/error/pass) in database."""
         with DatabaseManager(self.db_manager.db_path) as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('economic_indicators'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
@@ -227,9 +227,9 @@ class EconomicIndicatorsExtractor:
             # Check if status record already exists
             check_query = """
                 SELECT economic_indicator_id FROM economic_indicators 
-                WHERE economic_indicator_name = ? AND function_name = ? 
-                  AND interval = ? AND api_response_status = ? AND date IS NULL
-                  AND (maturity = ? OR (maturity IS NULL AND ? IS NULL))
+                WHERE economic_indicator_name = %s AND function_name = %s 
+                  AND interval = %s AND api_response_status = %s AND date IS NULL
+                  AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
             """
             existing = db.fetch_query(check_query, (indicator_name, function_name, interval, status, maturity, maturity))
             
@@ -241,7 +241,7 @@ class EconomicIndicatorsExtractor:
             insert_query = """
                 INSERT INTO economic_indicators 
                 (economic_indicator_name, function_name, maturity, date, interval, unit, value, name, api_response_status)
-                VALUES (?, ?, ?, NULL, ?, NULL, NULL, ?, ?)
+                VALUES (%s, %s, %s, NULL, %s, NULL, NULL, %s, %s)
             """
             
             db.execute_query(insert_query, (indicator_name, function_name, maturity, interval, message, status))
@@ -343,7 +343,7 @@ class EconomicIndicatorsExtractor:
                 FROM economic_indicators 
                 WHERE api_response_status = 'data'
                 GROUP BY economic_indicator_name, function_name, maturity
-                HAVING last_date IS NULL OR last_date <= ?
+                HAVING last_date IS NULL OR last_date <= %s
             """
             result = db.fetch_query(query, (threshold_date,))
             

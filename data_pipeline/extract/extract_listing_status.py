@@ -12,14 +12,14 @@ from pathlib import Path
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from db.database_manager import DatabaseManager
+from db.postgres_database_manager import PostgresDatabaseManager
 
 STOCK_API_FUNCTION = "LISTING_STATUS"
 
 class ListingStatusExtractor:
     """Extract and load listing status data from Alpha Vantage API."""
     
-    def __init__(self, db_path="db/stock_db.db"):
+    def __init__(self):
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
@@ -27,7 +27,7 @@ class ListingStatusExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.db_manager = DatabaseManager(db_path)
+        self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
     
     def extract_data(self):
@@ -111,25 +111,22 @@ class ListingStatusExtractor:
         
         with self.db_manager as db:
             # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "stock_db_schema.sql"
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('listing_status'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
             
-            # Prepare insert query
-            columns = list(df.columns)
-            placeholders = ', '.join(['?' for _ in columns])
-            insert_query = f"""
-                INSERT OR REPLACE INTO listing_status ({', '.join(columns)}) 
-                VALUES ({placeholders})
-            """
+            # Use PostgreSQL upsert functionality
+            # Convert dataframe to list of records for upsert
+            for index, row in df.iterrows():
+                data_dict = row.to_dict()
+                # Remove timestamp columns for upsert - they'll be handled by the database
+                data_dict.pop('created_at', None)
+                data_dict.pop('updated_at', None)
+                
+                db.upsert_data('listing_status', data_dict, ['symbol'])
             
-            # Convert dataframe to list of tuples for bulk insert
-            records = df.to_records(index=False).tolist()
-            
-            # Execute bulk insert
-            rows_affected = db.execute_many(insert_query, records)
-            print(f"Successfully loaded {rows_affected} records into listing_status table")
+            print(f"Successfully loaded {len(df)} records into listing_status table")
     
     def run_etl(self):
         """Run the complete ETL process."""
