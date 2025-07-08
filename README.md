@@ -66,3 +66,51 @@ fin-trade-craft/
 
 # Usage
 
+## Database Monitoring
+
+Monitor database health and statistics with the comprehensive database monitor utility:
+
+```bash
+# Quick status overview
+python utils/database_monitor.py --quick
+
+# Data freshness report  
+python utils/database_monitor.py --freshness
+
+# Detailed analysis for specific table
+python utils/database_monitor.py --table commodities
+
+# Full comprehensive report (default)
+python utils/database_monitor.py --full
+```
+
+The database monitor provides:
+- Row counts for all tables
+- Data freshness analysis with color-coded status
+- Storage usage statistics
+- API response status breakdowns
+- Null value analysis for key columns
+- Last update timestamps
+
+## ETL Data Extraction
+
+Run individual extractors to collect data from Alpha Vantage:
+
+```bash
+# Extract commodity data (oil, gas, metals, agriculture)
+python data_pipeline/extract/extract_commodities.py
+
+# Extract company overview data
+python data_pipeline/extract/extract_overview.py
+
+# Extract financial statements
+python data_pipeline/extract/extract_balance_sheet.py
+python data_pipeline/extract/extract_cash_flow.py
+python data_pipeline/extract/extract_income_statement.py
+
+# Extract stock price data
+python data_pipeline/extract/extract_time_series_daily_adjusted.py
+```
+
+All extractors use PostgreSQL for data storage and include built-in rate limiting, duplicate prevention, and error handling.
+
