@@ -56,42 +56,6 @@ class IncomeStatementExtractor:
             result = db.fetch_query(base_query, params)
             return {row[1]: row[0] for row in result}
     
-    def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
-        """Load symbols that haven't been processed yet (not in income_statement table)."""
-        with self.db_manager as db:
-            # First ensure the table exists, or create the schema
-            if not db.table_exists('income_statement'):
-                # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
-                db.initialize_schema(schema_path)
-            
-            # Now we can safely query with LEFT JOIN
-            base_query = """
-                SELECT ls.symbol_id, ls.symbol 
-                FROM listing_status ls 
-                LEFT JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
-                WHERE ls.asset_type = 'Stock' AND inc.symbol_id IS NULL
-            """
-            params = []
-            
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['%s' for _ in exchange_filter])
-                    base_query += f" AND ls.exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND ls.exchange = %s"
-                    params.append(exchange_filter)
-            
-            base_query += " GROUP BY ls.symbol_id, ls.symbol"
-            
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-            
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
-    
     def extract_single_income_statement(self, symbol):
         """Extract income statement data for a single symbol."""
         print(f"Processing TICKER: {symbol}")
@@ -288,36 +252,35 @@ class IncomeStatementExtractor:
             print(f"Error transforming single report for {symbol}: {e}")
             return None
     
-    def load_income_statement_data(self, records):
-        """Load income statement records into the database."""
+    def load_income_statement_data_with_db(self, db_manager, records):
+        """Load income statement records into the database using provided database manager."""
         if not records:
             print("No records to load")
             return
         
         print(f"Loading {len(records)} records into database...")
         
-        with DatabaseManager(self.db_manager.db_path) as db:
-            # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
-            if not db.table_exists('income_statement'):
-                print("Initializing database schema...")
-                db.initialize_schema(schema_path)
-            
-            # Prepare insert query
-            columns = list(records[0].keys())
-            placeholders = ', '.join(['%s' for _ in columns])
-            insert_query = f"""
-                INSERT OR REPLACE INTO income_statement ({', '.join(columns)}) 
-                VALUES ({placeholders})
-            """
-            
-            # Convert records to list of tuples
-            record_tuples = [tuple(record[col] for col in columns) for record in records]
-            
-            # Execute bulk insert
-            rows_affected = db.execute_many(insert_query, record_tuples)
-            print(f"Successfully loaded {rows_affected} records into income_statement table")
-    
+        # Initialize schema if tables don't exist
+        schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+        if not db_manager.table_exists('income_statement'):
+            print("Initializing database schema...")
+            db_manager.initialize_schema(schema_path)
+        
+        # Prepare insert query
+        columns = list(records[0].keys())
+        placeholders = ', '.join(['%s' for _ in columns])
+        insert_query = f"""
+            INSERT INTO income_statement ({', '.join(columns)}) 
+            VALUES ({placeholders})
+        """
+        
+        # Convert records to list of tuples
+        record_tuples = [tuple(record[col] for col in columns) for record in records]
+        
+        # Execute bulk insert
+        rows_affected = db_manager.execute_many(insert_query, record_tuples)
+        print(f"Successfully loaded {rows_affected} records into income_statement table")
+
     def run_etl_incremental(self, exchange_filter=None, limit=None):
         """Run ETL only for symbols not yet processed.
         
@@ -329,70 +292,53 @@ class IncomeStatementExtractor:
         print(f"Configuration: exchange={exchange_filter}, limit={limit}")
         
         try:
-            # Load only unprocessed symbols
-            symbol_mapping = self.load_unprocessed_symbols(exchange_filter, limit)
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} unprocessed symbols")
-            
-            if not symbols:
-                print("No unprocessed symbols found")
-                return
-            
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+            # Use a single database connection for the entire ETL batch
+            with self.db_manager as db:
+                # Load only unprocessed symbols using the shared connection
+                symbol_mapping = self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} unprocessed symbols")
                 
-                try:
-                    # Extract data for this symbol
-                    data, status = self.extract_single_income_statement(symbol)
+                if not symbols:
+                    print("No unprocessed symbols found")
+                    return
+                
+                total_records = 0
+                success_count = 0
+                fail_count = 0
+                
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
                     
-                    # Transform data
-                    records = self.transform_income_statement_data(symbol, symbol_id, data, status)
-                    
-                    if records:
-                        # Load records for this symbol
-                        self.load_income_statement_data(records)
-                        total_records += len(records)
-                        success_count += 1
-                        print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
-                    else:
+                    try:
+                        # Extract data for this symbol
+                        data, status = self.extract_single_income_statement(symbol)
+                        
+                        # Transform data
+                        records = self.transform_income_statement_data(symbol, symbol_id, data, status)
+                        
+                        if records:
+                            # Load records for this symbol using the shared connection
+                            self.load_income_statement_data_with_db(db, records)
+                            total_records += len(records)
+                            success_count += 1
+                            print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
+                        else:
+                            fail_count += 1
+                            print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        
+                    except Exception as e:
                         fail_count += 1
-                        print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
+                        # Continue processing other symbols even if one fails
+                        continue
                     
-                except Exception as e:
-                    fail_count += 1
-                    print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
-                    # Continue processing other symbols even if one fails
-                    continue
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
                 
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
-            
-            # Get remaining symbols count for summary
-            with DatabaseManager(self.db_manager.db_path) as db:
-                # Count remaining unprocessed symbols
-                base_query = """
-                    SELECT COUNT(DISTINCT ls.symbol_id)
-                    FROM listing_status ls 
-                    LEFT JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
-                    WHERE ls.asset_type = 'Stock' AND inc.symbol_id IS NULL
-                """
-                params = []
-                
-                if exchange_filter:
-                    if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['%s' for _ in exchange_filter])
-                        base_query += f" AND ls.exchange IN ({placeholders})"
-                        params.extend(exchange_filter)
-                    else:
-                        base_query += " AND ls.exchange = %s"
-                        params.append(exchange_filter)
-                
-                remaining_count = db.fetch_query(base_query, params)[0][0]
+                # Get remaining symbols count for summary using the same connection
+                remaining_count = self.get_remaining_symbols_count_with_db(db, exchange_filter)
             
             # Print summary
             print(f"\n" + "="*50)
@@ -412,52 +358,6 @@ class IncomeStatementExtractor:
             print(f"Incremental Income Statement ETL process failed: {e}")
             raise
 
-    def load_symbols_for_update(self, exchange_filter=None, limit=None, min_age_days=90):
-        """Load symbols that need data updates (existing symbols that haven't been updated recently).
-        
-        Args:
-            exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
-            limit: Maximum number of symbols to process
-            min_age_days: Minimum days since last update (default 90 days for quarterly updates)
-        """
-        with self.db_manager as db:
-            # First ensure the table exists, or create the schema
-            if not db.table_exists('income_statement'):
-                # Initialize schema to create the table
-                schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
-                db.initialize_schema(schema_path)
-                return {}  # No symbols to update if table was just created
-            
-            # Find symbols that haven't been updated recently
-            base_query = """
-                SELECT ls.symbol_id, ls.symbol, MAX(inc.updated_at) as last_updated
-                FROM listing_status ls 
-                INNER JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
-                WHERE ls.asset_type = 'Stock' 
-                  AND (inc.updated_at IS NULL OR 
-                       datetime(inc.updated_at) < datetime('now', '-{} days'))
-            """.format(min_age_days)
-            
-            params = []
-            
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['%s' for _ in exchange_filter])
-                    base_query += f" AND ls.exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND ls.exchange = %s"
-                    params.append(exchange_filter)
-            
-            base_query += " GROUP BY ls.symbol_id, ls.symbol"
-            
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-            
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
-
     def run_etl_update(self, exchange_filter=None, limit=None, min_age_days=90):
         """Run ETL to update existing symbols with latest data.
         
@@ -470,54 +370,55 @@ class IncomeStatementExtractor:
         print(f"Configuration: exchange={exchange_filter}, limit={limit}, min_age_days={min_age_days}")
         
         try:
-            # Load symbols that need updates
-            symbol_mapping = self.load_symbols_for_update(exchange_filter, limit, min_age_days)
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} symbols needing updates")
-            
-            if not symbols:
-                print("No symbols need updates")
-                return
-            
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+            # Use a single database connection for the entire ETL batch
+            with self.db_manager as db:
+                # Load symbols that need updates using the shared connection
+                symbol_mapping = self.load_symbols_for_update_with_db(db, exchange_filter, limit, min_age_days)
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} symbols needing updates")
                 
-                try:
-                    # Extract fresh data for this symbol
-                    data, status = self.extract_single_income_statement(symbol)
+                if not symbols:
+                    print("No symbols need updates")
+                    return
+                
+                total_records = 0
+                success_count = 0
+                fail_count = 0
+                
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
                     
-                    # Transform data
-                    records = self.transform_income_statement_data(symbol, symbol_id, data, status)
-                    
-                    if records:
-                        # Delete existing records for this symbol before inserting fresh data
-                        with DatabaseManager(self.db_manager.db_path) as db:
+                    try:
+                        # Extract fresh data for this symbol
+                        data, status = self.extract_single_income_statement(symbol)
+                        
+                        # Transform data
+                        records = self.transform_income_statement_data(symbol, symbol_id, data, status)
+                        
+                        if records:
+                            # Delete existing records for this symbol before inserting fresh data
                             delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
                             db.execute_query(delete_query, (symbol_id,))
                             print(f"Deleted existing records for {symbol}")
+                            
+                            # Load fresh records for this symbol using the shared connection
+                            self.load_income_statement_data_with_db(db, records)
+                            total_records += len(records)
+                            success_count += 1
+                            print(f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
+                        else:
+                            fail_count += 1
+                            print(f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
                         
-                        # Load fresh records for this symbol
-                        self.load_income_statement_data(records)
-                        total_records += len(records)
-                        success_count += 1
-                        print(f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
-                    else:
+                    except Exception as e:
                         fail_count += 1
-                        print(f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        print(f"✗ Error updating {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
+                        # Continue processing other symbols even if one fails
+                        continue
                     
-                except Exception as e:
-                    fail_count += 1
-                    print(f"✗ Error updating {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
-                    # Continue processing other symbols even if one fails
-                    continue
-                
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
             
             # Print summary
             print(f"\n" + "="*50)
@@ -549,123 +450,97 @@ class IncomeStatementExtractor:
         print(f"Configuration: exchange={exchange_filter}, limit={limit}, periods_back={periods_back}")
         
         try:
-            # Load symbols that already exist in the income_statement table
+            # Use a single database connection for the entire ETL batch
             with self.db_manager as db:
-                if not db.table_exists('income_statement'):
-                    print("Income statement table doesn't exist. Use run_etl_incremental first.")
+                # Load symbols that already exist in the income_statement table using the shared connection
+                symbol_mapping = self.load_existing_symbols_with_db(db, exchange_filter, limit)
+                
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} existing symbols to update with latest periods")
+                
+                if not symbols:
+                    print("No existing symbols found")
                     return
                 
-                base_query = """
-                    SELECT DISTINCT ls.symbol_id, ls.symbol 
-                    FROM listing_status ls 
-                    INNER JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
-                    WHERE ls.asset_type = 'Stock'
-                """
-                params = []
+                total_records = 0
+                success_count = 0
+                fail_count = 0
                 
-                if exchange_filter:
-                    if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['%s' for _ in exchange_filter])
-                        base_query += f" AND ls.exchange IN ({placeholders})"
-                        params.extend(exchange_filter)
-                    else:
-                        base_query += " AND ls.exchange = %s"
-                        params.append(exchange_filter)
-                
-                if limit:
-                    base_query += " LIMIT %s"
-                    params.append(limit)
-                
-                result = db.fetch_query(base_query, params)
-                symbol_mapping = {row[1]: row[0] for row in result}
-            
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} existing symbols to update with latest periods")
-            
-            if not symbols:
-                print("No existing symbols found")
-                return
-            
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
-                
-                try:
-                    # Extract fresh data for this symbol
-                    data, status = self.extract_single_income_statement(symbol)
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
                     
-                    if status == 'pass' and data:
-                        # Keep only the latest periods for each report type
-                        filtered_data = {
-                            'symbol': data.get('symbol'),
-                        }
+                    try:
+                        # Extract fresh data for this symbol
+                        data, status = self.extract_single_income_statement(symbol)
                         
-                        # Keep latest annual reports
-                        if 'annualReports' in data and data['annualReports']:
-                            # Sort by fiscal date and take the latest periods_back
-                            annual_reports = sorted(
-                                data['annualReports'], 
-                                key=lambda x: x.get('fiscalDateEnding', '1900-01-01'), 
-                                reverse=True
-                            )[:periods_back]
-                            filtered_data['annualReports'] = annual_reports
-                        else:
-                            filtered_data['annualReports'] = data.get('annualReports', [])
-                        
-                        # Keep latest quarterly reports
-                        if 'quarterlyReports' in data and data['quarterlyReports']:
-                            # Sort by fiscal date and take the latest periods_back
-                            quarterly_reports = sorted(
-                                data['quarterlyReports'], 
-                                key=lambda x: x.get('fiscalDateEnding', '1900-01-01'), 
-                                reverse=True
-                            )[:periods_back]
-                            filtered_data['quarterlyReports'] = quarterly_reports
-                        else:
-                            filtered_data['quarterlyReports'] = data.get('quarterlyReports', [])
-                        
-                        # Transform filtered data
-                        records = self.transform_income_statement_data(symbol, symbol_id, filtered_data, status)
-                        
-                        if records:
-                            # Delete existing records for this symbol before inserting fresh data
-                            with DatabaseManager(self.db_manager.db_path) as db:
-                                delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
-                                db.execute_query(delete_query, (symbol_id,))
+                        if status == 'pass' and data:
+                            # Keep only the latest periods for each report type
+                            filtered_data = {
+                                'symbol': data.get('symbol'),
+                            }
                             
-                            # Load latest period records for this symbol
-                            self.load_income_statement_data(records)
-                            total_records += len(records)
-                            success_count += 1
-                            print(f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} latest records [{i+1}/{len(symbols)}]")
-                        else:
-                            fail_count += 1
-                            print(f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
-                    else:
-                        # Handle failed extractions
-                        records = self.transform_income_statement_data(symbol, symbol_id, data, status)
-                        if records:
-                            # Delete and replace with error records
-                            with DatabaseManager(self.db_manager.db_path) as db:
+                            # Keep latest annual reports
+                            if 'annualReports' in data and data['annualReports']:
+                                # Sort by fiscal date and take the latest periods_back
+                                annual_reports = sorted(
+                                    data['annualReports'], 
+                                    key=lambda x: x.get('fiscalDateEnding', '1900-01-01'), 
+                                    reverse=True
+                                )[:periods_back]
+                                filtered_data['annualReports'] = annual_reports
+                            else:
+                                filtered_data['annualReports'] = data.get('annualReports', [])
+                            
+                            # Keep latest quarterly reports
+                            if 'quarterlyReports' in data and data['quarterlyReports']:
+                                # Sort by fiscal date and take the latest periods_back
+                                quarterly_reports = sorted(
+                                    data['quarterlyReports'], 
+                                    key=lambda x: x.get('fiscalDateEnding', '1900-01-01'), 
+                                    reverse=True
+                                )[:periods_back]
+                                filtered_data['quarterlyReports'] = quarterly_reports
+                            else:
+                                filtered_data['quarterlyReports'] = data.get('quarterlyReports', [])
+                            
+                            # Transform filtered data
+                            records = self.transform_income_statement_data(symbol, symbol_id, filtered_data, status)
+                            
+                            if records:
+                                # Delete existing records for this symbol before inserting fresh data
                                 delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
                                 db.execute_query(delete_query, (symbol_id,))
-                            self.load_income_statement_data(records)
-                            total_records += len(records)
+                                print(f"Deleted existing records for {symbol}")
+                                
+                                # Load latest period records for this symbol using the shared connection
+                                self.load_income_statement_data_with_db(db, records)
+                                total_records += len(records)
+                                success_count += 1
+                                print(f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} latest records [{i+1}/{len(symbols)}]")
+                            else:
+                                fail_count += 1
+                                print(f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        else:
+                            # Handle failed extractions
+                            records = self.transform_income_statement_data(symbol, symbol_id, data, status)
+                            if records:
+                                # Delete and replace with error records
+                                delete_query = "DELETE FROM income_statement WHERE symbol_id = %s"
+                                db.execute_query(delete_query, (symbol_id,))
+                                self.load_income_statement_data_with_db(db, records)
+                                total_records += len(records)
+                            fail_count += 1
+                            print(f"✗ Failed to get data for {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}]")
+                        
+                    except Exception as e:
                         fail_count += 1
-                        print(f"✗ Failed to get data for {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}]")
+                        print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
+                        # Continue processing other symbols even if one fails
+                        continue
                     
-                except Exception as e:
-                    fail_count += 1
-                    print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
-                    # Continue processing other symbols even if one fails
-                    continue
-                
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
             
             # Print summary
             print(f"\n" + "="*50)
@@ -684,6 +559,133 @@ class IncomeStatementExtractor:
         except Exception as e:
             print(f"Income Statement LATEST PERIODS ETL process failed: {e}")
             raise
+
+    def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
+        """Load symbols that haven't been processed yet using provided database connection."""
+        # First ensure the table exists, or create the schema
+        if not db.table_exists('income_statement'):
+            # Initialize schema to create the table
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+            db.initialize_schema(schema_path)
+        
+        # Now we can safely query with LEFT JOIN
+        base_query = """
+            SELECT ls.symbol_id, ls.symbol 
+            FROM listing_status ls 
+            LEFT JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
+            WHERE ls.asset_type = 'Stock' AND inc.symbol_id IS NULL
+        """
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        base_query += " GROUP BY ls.symbol_id, ls.symbol"
+        
+        if limit:
+            base_query += " LIMIT %s"
+            params.append(limit)
+        
+        result = db.fetch_query(base_query, params)
+        return {row[1]: row[0] for row in result}
+
+    def get_remaining_symbols_count_with_db(self, db, exchange_filter=None):
+        """Get count of remaining unprocessed symbols using provided database connection."""
+        base_query = """
+            SELECT COUNT(DISTINCT ls.symbol_id)
+            FROM listing_status ls 
+            LEFT JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
+            WHERE ls.asset_type = 'Stock' AND inc.symbol_id IS NULL
+        """
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        return db.fetch_query(base_query, params)[0][0]
+
+    def load_symbols_for_update_with_db(self, db, exchange_filter=None, limit=None, min_age_days=90):
+        """Load symbols that need data updates using provided database connection."""
+        # First ensure the table exists, or create the schema
+        if not db.table_exists('income_statement'):
+            # Initialize schema to create the table
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+            db.initialize_schema(schema_path)
+            return {}  # No symbols to update if table was just created
+        
+        # Find symbols that haven't been updated recently
+        base_query = """
+            SELECT ls.symbol_id, ls.symbol, MAX(inc.updated_at) as last_updated
+            FROM listing_status ls 
+            INNER JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
+            WHERE ls.asset_type = 'Stock' 
+              AND (inc.updated_at IS NULL OR 
+                   datetime(inc.updated_at) < datetime('now', '-{} days'))
+        """.format(min_age_days)
+        
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        base_query += " GROUP BY ls.symbol_id, ls.symbol"
+        
+        if limit:
+            base_query += " LIMIT %s"
+            params.append(limit)
+        
+        result = db.fetch_query(base_query, params)
+        return {row[1]: row[0] for row in result}
+
+    def load_existing_symbols_with_db(self, db, exchange_filter=None, limit=None):
+        """Load symbols that already exist in the income_statement table using provided database connection."""
+        if not db.table_exists('income_statement'):
+            print("Income statement table doesn't exist. Use run_etl_incremental first.")
+            return {}
+        
+        base_query = """
+            SELECT DISTINCT ls.symbol_id, ls.symbol 
+            FROM listing_status ls 
+            INNER JOIN income_statement inc ON ls.symbol_id = inc.symbol_id 
+            WHERE ls.asset_type = 'Stock'
+        """
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        if limit:
+            base_query += " LIMIT %s"
+            params.append(limit)
+        
+        result = db.fetch_query(base_query, params)
+        return {row[1]: row[0] for row in result}
+
+    # ...existing code...
 def main():
     """Main function to run the income statement extraction."""
     
@@ -693,7 +695,8 @@ def main():
     
     # === INITIAL DATA COLLECTION ===
     # Option 1: Initial income statement data collection (recommended for first run)
-    extractor.run_etl_incremental(exchange_filter='NYSE', limit=5)
+    extractor.run_etl_incremental(exchange_filter='NYSE', limit=3000)
+    extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=6000)
     
     # Option 2: Process NYSE symbols
     # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)

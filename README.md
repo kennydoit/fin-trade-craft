@@ -7,6 +7,7 @@
 # Environment
 - Environment and libraries are all to be managed using UV. 
 - Libraries can be added via ```uv pip install``` or ```pip install``` as long as they are also added to pyproject.toml
+- Codebase runs on Windows
 <br><br>
 
 # Copilot References
