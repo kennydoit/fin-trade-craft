@@ -54,7 +54,7 @@ class EconomicIndicatorsExtractor:
     
     def get_existing_data_dates(self, indicator_name, function_name, maturity, interval):
         """Get existing dates for an economic indicator to avoid duplicates."""
-        with DatabaseManager(self.db_manager.db_path) as db:
+        with self.db_manager as db:
             query = """
                 SELECT date 
                 FROM economic_indicators 
@@ -68,7 +68,7 @@ class EconomicIndicatorsExtractor:
     
     def get_last_update_date(self, indicator_name, function_name, maturity, interval):
         """Get the most recent date for an economic indicator."""
-        with DatabaseManager(self.db_manager.db_path) as db:
+        with self.db_manager as db:
             query = """
                 SELECT MAX(date) 
                 FROM economic_indicators 
@@ -197,7 +197,7 @@ class EconomicIndicatorsExtractor:
             records.append(record)
         
         # Insert data
-        with DatabaseManager(self.db_manager.db_path) as db:
+        with self.db_manager as db:
             # Initialize schema if tables don't exist
             schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('economic_indicators'):
@@ -205,9 +205,10 @@ class EconomicIndicatorsExtractor:
                 db.initialize_schema(schema_path)
                 
             insert_query = """
-                INSERT OR IGNORE INTO economic_indicators 
+                INSERT INTO economic_indicators 
                 (economic_indicator_name, function_name, maturity, date, interval, unit, value, name, api_response_status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (economic_indicator_name, function_name, maturity, date, interval) DO NOTHING
             """
             
             inserted_count = db.execute_many(insert_query, records)
@@ -217,7 +218,7 @@ class EconomicIndicatorsExtractor:
     
     def record_status(self, indicator_name, function_name, maturity, interval, status, message):
         """Record extraction status (empty/error/pass) in database."""
-        with DatabaseManager(self.db_manager.db_path) as db:
+        with self.db_manager as db:
             # Initialize schema if tables don't exist
             schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('economic_indicators'):
@@ -271,6 +272,134 @@ class EconomicIndicatorsExtractor:
             self.record_status(display_name, actual_function, maturity, interval, status, message)
             return 0, status
     
+    def get_existing_data_dates_with_db(self, db, indicator_name, function_name, maturity, interval):
+        """Get existing dates for an economic indicator to avoid duplicates using provided database connection."""
+        query = """
+            SELECT date 
+            FROM economic_indicators 
+            WHERE economic_indicator_name = %s AND function_name = %s 
+              AND interval = %s AND api_response_status = 'data'
+              AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+            ORDER BY date DESC
+        """
+        result = db.fetch_query(query, (indicator_name, function_name, interval, maturity, maturity))
+        return [row[0] for row in result] if result else []
+
+    def get_last_update_date_with_db(self, db, indicator_name, function_name, maturity, interval):
+        """Get the most recent date for an economic indicator using provided database connection."""
+        query = """
+            SELECT MAX(date) 
+            FROM economic_indicators 
+            WHERE economic_indicator_name = %s AND function_name = %s 
+              AND interval = %s AND api_response_status = 'data'
+              AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+        """
+        result = db.fetch_query(query, (indicator_name, function_name, interval, maturity, maturity))
+        return result[0][0] if result and result[0] and result[0][0] else None
+
+    def load_indicator_data_with_db(self, db, df, indicator_name, function_name, maturity, interval):
+        """Load economic indicator data into the database using provided database connection."""
+        if df is None or df.empty:
+            return 0
+        
+        # Get existing dates to avoid duplicates
+        existing_dates = set(self.get_existing_data_dates_with_db(db, indicator_name, function_name, maturity, interval))
+        
+        # Filter out existing dates
+        if existing_dates:
+            df = df[~df['date'].isin(existing_dates)]
+            if df.empty:
+                print(f"All {len(existing_dates)} records for {indicator_name} already exist in database")
+                return 0
+        
+        # Prepare data for insertion
+        records = []
+        for _, row in df.iterrows():
+            record = (
+                row['economic_indicator_name'],
+                row['function_name'],
+                row['maturity'],
+                row['date'],
+                row['interval'],
+                row['unit'],
+                row['value'],
+                row['name'],
+                row['api_response_status']
+            )
+            records.append(record)
+        
+        # Initialize schema if tables don't exist
+        schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+        if not db.table_exists('economic_indicators'):
+            print("Initializing database schema...")
+            db.initialize_schema(schema_path)
+            
+        insert_query = """
+            INSERT INTO economic_indicators 
+            (economic_indicator_name, function_name, maturity, date, interval, unit, value, name, api_response_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (economic_indicator_name, function_name, maturity, date, interval) DO NOTHING
+        """
+        
+        inserted_count = db.execute_many(insert_query, records)
+        print(f"Inserted {inserted_count} new records for {indicator_name}")
+        return inserted_count
+
+    def record_status_with_db(self, db, indicator_name, function_name, maturity, interval, status, message):
+        """Record extraction status (empty/error/pass) in database using provided database connection."""
+        # Initialize schema if tables don't exist
+        schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+        if not db.table_exists('economic_indicators'):
+            print("Initializing database schema...")
+            db.initialize_schema(schema_path)
+            
+        # Check if status record already exists
+        check_query = """
+            SELECT indicator_id FROM economic_indicators 
+            WHERE economic_indicator_name = %s AND function_name = %s 
+              AND interval = %s AND api_response_status = %s AND date IS NULL
+              AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+        """
+        existing = db.fetch_query(check_query, (indicator_name, function_name, interval, status, maturity, maturity))
+        
+        if existing:
+            print(f"Status record already exists for {indicator_name}: {status}")
+            return
+        
+        # Insert status record
+        insert_query = """
+            INSERT INTO economic_indicators 
+            (economic_indicator_name, function_name, maturity, date, interval, unit, value, name, api_response_status)
+            VALUES (%s, %s, %s, NULL, %s, NULL, NULL, %s, %s)
+        """
+        
+        db.execute_query(insert_query, (indicator_name, function_name, maturity, interval, message, status))
+        print(f"Recorded {status} status for {indicator_name}")
+
+    def extract_and_load_indicator_with_db(self, db, function_key, force_update=False):
+        """Extract and load data for a single economic indicator using provided database connection."""
+        interval, display_name, maturity = ECONOMIC_INDICATOR_CONFIGS[function_key]
+        actual_function = function_key
+        
+        # Check if we should skip (unless force_update)
+        if not force_update:
+            last_update = self.get_last_update_date_with_db(db, display_name, actual_function, maturity, interval)
+            if last_update:
+                print(f"Data exists for {display_name} (last update: {last_update}). Use force_update=True to refresh.")
+                return 0, 'pass'
+        
+        # Extract data from API
+        df, status, message = self.extract_economic_indicator_data(function_key)
+        
+        if status == 'data':
+            # Load data into database
+            inserted_count = self.load_indicator_data_with_db(db, df, display_name, actual_function, maturity, interval)
+            return inserted_count, status
+        else:
+            # Record status (empty/error)
+            self.record_status_with_db(db, display_name, actual_function, maturity, interval, status, message)
+            return 0, status
+
     def run_etl_batch(self, indicator_list=None, batch_size=5, force_update=False):
         """Run ETL for multiple economic indicators with batch processing and rate limiting."""
         if indicator_list is None:
@@ -283,35 +412,37 @@ class EconomicIndicatorsExtractor:
         total_inserted = 0
         status_summary = {'data': 0, 'empty': 0, 'error': 0, 'pass': 0}
         
-        for i, function_key in enumerate(indicator_list):
-            if function_key not in ECONOMIC_INDICATOR_CONFIGS:
-                print(f"Unknown economic indicator function: {function_key}")
-                continue
-                
-            display_name = ECONOMIC_INDICATOR_CONFIGS[function_key][1]
-            print(f"Processing {i+1}/{len(indicator_list)}: {display_name}")
-            
-            try:
-                inserted_count, status = self.extract_and_load_indicator(function_key, force_update)
-                total_inserted += inserted_count
-                status_summary[status] += 1
-                
-                # Rate limiting between requests
-                if i < len(indicator_list) - 1:  # Don't sleep after the last request
-                    print(f"Rate limiting: sleeping for {self.rate_limit_delay} seconds...")
-                    time.sleep(self.rate_limit_delay)
-                
-                # Batch processing pause
-                if (i + 1) % batch_size == 0 and i < len(indicator_list) - 1:
-                    print(f"Batch {(i + 1) // batch_size} completed. Pausing for 2 seconds...")
-                    time.sleep(2)
+        # Use a single database connection for the entire ETL batch
+        with self.db_manager as db:
+            for i, function_key in enumerate(indicator_list):
+                if function_key not in ECONOMIC_INDICATOR_CONFIGS:
+                    print(f"Unknown economic indicator function: {function_key}")
+                    continue
                     
-            except Exception as e:
-                print(f"Error processing {display_name}: {str(e)}")
-                status_summary['error'] += 1
-                continue
-            
-            print("-" * 30)
+                display_name = ECONOMIC_INDICATOR_CONFIGS[function_key][1]
+                print(f"Processing {i+1}/{len(indicator_list)}: {display_name}")
+                
+                try:
+                    inserted_count, status = self.extract_and_load_indicator_with_db(db, function_key, force_update)
+                    total_inserted += inserted_count
+                    status_summary[status] += 1
+                    
+                    # Rate limiting between requests
+                    if i < len(indicator_list) - 1:  # Don't sleep after the last request
+                        print(f"Rate limiting: sleeping for {self.rate_limit_delay} seconds...")
+                        time.sleep(self.rate_limit_delay)
+                    
+                    # Batch processing pause
+                    if (i + 1) % batch_size == 0 and i < len(indicator_list) - 1:
+                        print(f"Batch {(i + 1) // batch_size} completed. Pausing for 0.8 seconds...")
+                        time.sleep(0.8)
+                        
+                except Exception as e:
+                    print(f"Error processing {display_name}: {str(e)}")
+                    status_summary['error'] += 1
+                    continue
+                
+                print("-" * 30)
         
         # Print summary
         print("\n" + "=" * 50)
@@ -337,7 +468,7 @@ class EconomicIndicatorsExtractor:
         
         threshold_date = datetime.now().date() - timedelta(days=days_threshold)
         
-        with DatabaseManager(self.db_manager.db_path) as db:
+        with self.db_manager as db:
             query = """
                 SELECT DISTINCT economic_indicator_name, function_name, maturity, MAX(date) as last_date
                 FROM economic_indicators 
@@ -371,7 +502,10 @@ class EconomicIndicatorsExtractor:
     
     def get_database_summary(self):
         """Get summary of economic indicators data in the database."""
-        with DatabaseManager(self.db_manager.db_path) as db:
+        # Create a fresh database manager instance to avoid connection issues
+        db_manager = PostgresDatabaseManager()
+        
+        with db_manager as db:
             # Total records by status
             status_query = """
                 SELECT api_response_status, COUNT(*) as count
@@ -454,8 +588,8 @@ def main():
     
     # === INITIAL DATA COLLECTION ===
     # Option 1: Test with a few indicators first (recommended for first run)
-    test_indicators = ['REAL_GDP', 'FEDERAL_FUNDS_RATE', 'UNEMPLOYMENT']
-    extractor.run_etl_batch(test_indicators, batch_size=2, force_update=False)
+    # test_indicators = ['REAL_GDP', 'FEDERAL_FUNDS_RATE', 'UNEMPLOYMENT']
+    # extractor.run_etl_batch(test_indicators, batch_size=2, force_update=False)
     
     # Option 2: Extract GDP and related indicators
     # gdp_indicators = ['REAL_GDP', 'REAL_GDP_PER_CAPITA']
@@ -475,7 +609,7 @@ def main():
     # extractor.run_etl_batch(inflation_indicators, batch_size=2, force_update=False)
     
     # Option 6: Extract all economic indicators (full dataset)
-    # extractor.run_etl_batch(force_update=False)  # Uses all indicators by default
+    extractor.run_etl_batch(force_update=False)  # Uses all indicators by default
     
     # === DATA UPDATES ===
     # Option 7: Update all indicators with fresh data (use sparingly due to API limits)
@@ -503,6 +637,8 @@ def main():
     # extractor.run_etl_latest_periods(days_threshold=90, batch_size=2)
     
     print("\nFinal Database Summary:")
+    # Small delay to ensure previous connection is fully closed
+    time.sleep(0.1)
     extractor.get_database_summary()
 
 

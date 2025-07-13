@@ -1,5 +1,3 @@
-
-
 """
 Extract time series daily adjusted data from Alpha Vantage API and load into database.
 """
@@ -215,19 +213,29 @@ class TimeSeriesExtractor:
         
         print(f"Loading {len(records)} records into database...")
         
-        with DatabaseManager(self.db_manager.db_path) as db:
+        with self.db_manager as db:
             # Initialize schema if tables don't exist
             schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
             if not db.table_exists('time_series_daily_adjusted'):
                 print("Initializing database schema...")
                 db.initialize_schema(schema_path)
             
-            # Prepare insert query
+            # Prepare insert query using PostgreSQL syntax
             columns = list(records[0].keys())
             placeholders = ', '.join(['%s' for _ in columns])
             insert_query = f"""
-                INSERT OR REPLACE INTO time_series_daily_adjusted ({', '.join(columns)}) 
+                INSERT INTO time_series_daily_adjusted ({', '.join(columns)}) 
                 VALUES ({placeholders})
+                ON CONFLICT (symbol_id, date) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    adjusted_close = EXCLUDED.adjusted_close,
+                    volume = EXCLUDED.volume,
+                    dividend_amount = EXCLUDED.dividend_amount,
+                    split_coefficient = EXCLUDED.split_coefficient,
+                    updated_at = EXCLUDED.updated_at
             """
             
             # Convert records to list of tuples
@@ -236,6 +244,101 @@ class TimeSeriesExtractor:
             # Execute bulk insert
             rows_affected = db.execute_many(insert_query, record_tuples)
             print(f"Successfully loaded {rows_affected} records into time_series_daily_adjusted table")
+
+    def load_time_series_data_with_db(self, db_manager, records):
+        """Load time series records into the database using provided database manager."""
+        if not records:
+            print("No records to load")
+            return
+        
+        print(f"Loading {len(records)} records into database...")
+        
+        # Initialize schema if tables don't exist
+        schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+        if not db_manager.table_exists('time_series_daily_adjusted'):
+            print("Initializing database schema...")
+            db_manager.initialize_schema(schema_path)
+        
+        # Prepare insert query using PostgreSQL syntax
+        columns = list(records[0].keys())
+        placeholders = ', '.join(['%s' for _ in columns])
+        insert_query = f"""
+            INSERT INTO time_series_daily_adjusted ({', '.join(columns)}) 
+            VALUES ({placeholders})
+            ON CONFLICT (symbol_id, date) DO UPDATE SET
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                adjusted_close = EXCLUDED.adjusted_close,
+                volume = EXCLUDED.volume,
+                dividend_amount = EXCLUDED.dividend_amount,
+                split_coefficient = EXCLUDED.split_coefficient,
+                updated_at = EXCLUDED.updated_at
+        """
+        
+        # Convert records to list of tuples
+        record_tuples = [tuple(record[col] for col in columns) for record in records]
+        
+        # Execute bulk insert
+        rows_affected = db_manager.execute_many(insert_query, record_tuples)
+        print(f"Successfully loaded {rows_affected} records into time_series_daily_adjusted table")
+    
+    def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
+        """Load symbols that haven't been processed yet using provided database connection."""
+        # First ensure the table exists, or create the schema
+        if not db.table_exists('time_series_daily_adjusted'):
+            # Initialize schema to create the table
+            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+            db.initialize_schema(schema_path)
+        
+        # Now we can safely query with LEFT JOIN
+        base_query = """
+            SELECT ls.symbol_id, ls.symbol 
+            FROM listing_status ls 
+            LEFT JOIN time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
+            WHERE ls.asset_type = 'Stock' AND ts.symbol_id IS NULL
+        """
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        base_query += " GROUP BY ls.symbol_id, ls.symbol"
+        
+        if limit:
+            base_query += " LIMIT %s"
+            params.append(limit)
+        
+        result = db.fetch_query(base_query, params)
+        return {row[1]: row[0] for row in result}
+
+    def get_remaining_symbols_count_with_db(self, db, exchange_filter=None):
+        """Get count of remaining unprocessed symbols using provided database connection."""
+        base_query = """
+            SELECT COUNT(DISTINCT ls.symbol_id)
+            FROM listing_status ls 
+            LEFT JOIN time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
+            WHERE ls.asset_type = 'Stock' AND ts.symbol_id IS NULL
+        """
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        return db.fetch_query(base_query, params)[0][0]
     
     def run_etl_incremental(self, exchange_filter=None, limit=None, start_date=None, end_date=None):
         """Run ETL only for symbols not yet processed.
@@ -252,70 +355,54 @@ class TimeSeriesExtractor:
             print(f"Date range: {start_date or 'beginning'} to {end_date or 'end'}")
         
         try:
-            # Load only unprocessed symbols
-            symbol_mapping = self.load_unprocessed_symbols(exchange_filter, limit)
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} unprocessed symbols")
-            
-            if not symbols:
-                print("No unprocessed symbols found")
-                return
-            
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+            # Use a fresh database manager for this ETL run
+            db_manager = PostgresDatabaseManager()
+            with db_manager as db:
+                # Load only unprocessed symbols using the shared connection
+                symbol_mapping = self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} unprocessed symbols")
                 
-                try:
-                    # Extract data for this symbol
-                    df, status = self.extract_single_time_series(symbol)
+                if not symbols:
+                    print("No unprocessed symbols found")
+                    return
+                
+                total_records = 0
+                success_count = 0
+                fail_count = 0
+                
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
                     
-                    # Transform data with date filtering
-                    records = self.transform_time_series_data(symbol, symbol_id, df, status, start_date, end_date)
-                    
-                    if records:
-                        # Load records for this symbol
-                        self.load_time_series_data(records)
-                        total_records += len(records)
-                        success_count += 1
-                        print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
-                    else:
+                    try:
+                        # Extract data for this symbol
+                        df, status = self.extract_single_time_series(symbol)
+                        
+                        # Transform data with date filtering
+                        records = self.transform_time_series_data(symbol, symbol_id, df, status, start_date, end_date)
+                        
+                        if records:
+                            # Load records for this symbol using the shared connection
+                            self.load_time_series_data_with_db(db, records)
+                            total_records += len(records)
+                            success_count += 1
+                            print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]")
+                        else:
+                            fail_count += 1
+                            print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        
+                    except Exception as e:
                         fail_count += 1
-                        print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]")
+                        print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
+                        # Continue processing other symbols even if one fails
+                        continue
                     
-                except Exception as e:
-                    fail_count += 1
-                    print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
-                    # Continue processing other symbols even if one fails
-                    continue
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
                 
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
-            
-            # Get remaining symbols count for summary
-            with DatabaseManager(self.db_manager.db_path) as db:
-                # Count remaining unprocessed symbols
-                base_query = """
-                    SELECT COUNT(DISTINCT ls.symbol_id)
-                    FROM listing_status ls 
-                    LEFT JOIN time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
-                    WHERE ls.asset_type = 'Stock' AND ts.symbol_id IS NULL
-                """
-                params = []
-                
-                if exchange_filter:
-                    if isinstance(exchange_filter, list):
-                        placeholders = ','.join(['%s' for _ in exchange_filter])
-                        base_query += f" AND ls.exchange IN ({placeholders})"
-                        params.extend(exchange_filter)
-                    else:
-                        base_query += " AND ls.exchange = %s"
-                        params.append(exchange_filter)
-                
-                remaining_count = db.fetch_query(base_query, params)[0][0]
+                # Get remaining symbols count for summary using the same connection
+                remaining_count = self.get_remaining_symbols_count_with_db(db, exchange_filter)
             
             # Print summary
             print(f"\n" + "="*50)
@@ -342,7 +429,8 @@ def main():
     
     # Option 1: Initial full historical data collection (recommended for first run)
     extractor_full = TimeSeriesExtractor(output_size="full")
-    extractor_full.run_etl_incremental(exchange_filter='NYSE MKT', limit=266)  # Increased for premium tier
+    # extractor_full.run_etl_incremental(exchange_filter='NYSE', limit=4000)  # Increased for premium tier
+    extractor_full.run_etl_incremental(exchange_filter='NASDAQ', limit=6000)  # Increased for premium tier
     
     # Option 2: Daily updates with compact data (for ongoing collection)
     # extractor_compact = TimeSeriesExtractor(output_size="compact")
@@ -362,4 +450,4 @@ def main():
     # extractor_batch.run_etl_incremental(exchange_filter='NASDAQ', limit=50)
 
 if __name__ == "__main__":
-    main()    
+    main()

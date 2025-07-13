@@ -135,95 +135,99 @@ class OverviewExtractor:
         
         return transformed
     
-    def load_overview_data(self, records):
-        """Load overview records into the database."""
+    def load_overview_data_with_db(self, db_manager, records):
+        """Load overview records into the database using provided database manager."""
         if not records:
             print("No records to load")
             return
         
         print(f"Loading {len(records)} records into database...")
         
-        # Use a fresh database manager instance for loading
-        db_manager = PostgresDatabaseManager()
-        with db_manager as db:
-            # Initialize schema if tables don't exist
-            schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
-            if not db.table_exists('overview'):
-                print("Initializing database schema...")
-                db.initialize_schema(schema_path)
+        # Initialize schema if tables don't exist
+        schema_path = Path(__file__).parent.parent.parent / "db" / "schema" / "postgres_stock_db_schema.sql"
+        if not db_manager.table_exists('overview'):
+            print("Initializing database schema...")
+            db_manager.initialize_schema(schema_path)
+        
+        # Use PostgreSQL upsert functionality
+        for record in records:
+            # Remove timestamp columns for upsert - they'll be handled by the database
+            data_dict = record.copy()
+            data_dict.pop('created_at', None)
+            data_dict.pop('updated_at', None)
             
-            # Use PostgreSQL upsert functionality
-            for record in records:
-                # Remove timestamp columns for upsert - they'll be handled by the database
-                data_dict = record.copy()
-                data_dict.pop('created_at', None)
-                data_dict.pop('updated_at', None)
-                
-                db.upsert_data('overview', data_dict, ['symbol_id'])
-            
-            print(f"Successfully loaded {len(records)} records into overview table")
+            db_manager.upsert_data('overview', data_dict, ['symbol_id'])
+        
+        print(f"Successfully loaded {len(records)} records into overview table")
     
+    def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
+        """Load symbols that haven't been processed yet using provided database connection."""
+        base_query = """
+            SELECT ls.symbol_id, ls.symbol 
+            FROM listing_status ls 
+            LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
+            WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL
+        """
+        params = []
+        
+        if exchange_filter:
+            if isinstance(exchange_filter, list):
+                placeholders = ','.join(['%s' for _ in exchange_filter])
+                base_query += f" AND ls.exchange IN ({placeholders})"
+                params.extend(exchange_filter)
+            else:
+                base_query += " AND ls.exchange = %s"
+                params.append(exchange_filter)
+        
+        if limit:
+            base_query += " LIMIT %s"
+            params.append(limit)
+        
+        result = db.fetch_query(base_query, params)
+        return {row[1]: row[0] for row in result}
+
     def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet (not in overview table)."""
         with self.db_manager as db:
-            base_query = """
-                SELECT ls.symbol_id, ls.symbol 
-                FROM listing_status ls 
-                LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
-                WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL
-            """
-            params = []
-            
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['%s' for _ in exchange_filter])
-                    base_query += f" AND ls.exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND ls.exchange = %s"
-                    params.append(exchange_filter)
-            
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-            
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
+            return self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
     
     def run_etl(self, exchange_filter=None, limit=None):
         """Run the complete ETL process for overview data."""
         print("Starting Overview ETL process...")
         
         try:
-            # Load symbols to process (now returns dict: symbol -> symbol_id)
-            symbol_mapping = self.load_valid_symbols(exchange_filter, limit)
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} symbols to process")
-            
-            if not symbols:
-                print("No symbols found to process")
-                return
-            
-            records = []
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+            # Use a fresh database manager for this ETL run
+            db_manager = PostgresDatabaseManager()
+            with db_manager as db:
+                # Load symbols to process (now returns dict: symbol -> symbol_id)
+                symbol_mapping = self.load_valid_symbols(exchange_filter, limit)
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} symbols to process")
                 
-                # Extract data for this symbol
-                data, status = self.extract_single_overview(symbol)
+                if not symbols:
+                    print("No symbols found to process")
+                    return
                 
-                # Transform data
-                transformed_record = self.transform_overview_data(symbol, symbol_id, data, status)
-                records.append(transformed_record)
+                records = []
                 
-                print(f"Processed {symbol} (ID: {symbol_id}) with status: {status}")
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
+                    
+                    # Extract data for this symbol
+                    data, status = self.extract_single_overview(symbol)
+                    
+                    # Transform data
+                    transformed_record = self.transform_overview_data(symbol, symbol_id, data, status)
+                    records.append(transformed_record)
+                    
+                    print(f"Processed {symbol} (ID: {symbol_id}) with status: {status}")
+                    
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:  # Don't wait after the last request
+                        time.sleep(self.rate_limit_delay)
                 
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:  # Don't wait after the last request
-                    time.sleep(self.rate_limit_delay)
-            
-            # Load all records
-            self.load_overview_data(records)
+                # Load all records using the shared connection
+                self.load_overview_data_with_db(db, records)
             
             # Print summary
             pass_count = sum(1 for r in records if r['status'] == 'pass')
@@ -244,35 +248,38 @@ class OverviewExtractor:
         print("Starting Incremental Overview ETL process...")
         
         try:
-            # Load only unprocessed symbols
-            symbol_mapping = self.load_unprocessed_symbols(exchange_filter, limit)
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} unprocessed symbols")
-            
-            if not symbols:
-                print("No unprocessed symbols found")
-                return
-            
-            records = []
-            
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+            # Use a fresh database manager for this ETL run
+            db_manager = PostgresDatabaseManager()
+            with db_manager as db:
+                # Load only unprocessed symbols using the shared connection
+                symbol_mapping = self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} unprocessed symbols")
                 
-                # Extract data for this symbol
-                data, status = self.extract_single_overview(symbol)
+                if not symbols:
+                    print("No unprocessed symbols found")
+                    return
                 
-                # Transform data
-                transformed_record = self.transform_overview_data(symbol, symbol_id, data, status)
-                records.append(transformed_record)
+                records = []
                 
-                print(f"Processed {symbol} (ID: {symbol_id}) with status: {status} [{i+1}/{len(symbols)}]")
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
+                    
+                    # Extract data for this symbol
+                    data, status = self.extract_single_overview(symbol)
+                    
+                    # Transform data
+                    transformed_record = self.transform_overview_data(symbol, symbol_id, data, status)
+                    records.append(transformed_record)
+                    
+                    print(f"Processed {symbol} (ID: {symbol_id}) with status: {status} [{i+1}/{len(symbols)}]")
+                    
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
                 
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
-            
-            # Load all records
-            self.load_overview_data(records)
+                # Load all records using the shared connection
+                self.load_overview_data_with_db(db, records)
             
             # Print summary
             pass_count = sum(1 for r in records if r['status'] == 'pass')
@@ -301,18 +308,33 @@ def main():
     # extractor.run_etl(exchange_filter='NYSE', limit=100)
     
     # Option 3: Process only symbols not yet in overview table
-    extractor.run_etl_incremental(exchange_filter='NYSE', limit=695)
+    print("Processing NYSE symbols...")
+    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=5000)
+    
+    print("Processing NASDAQ symbols...")
+    extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=5000)
 
-    # Add this to check remaining symbols before running
+    # Check remaining symbols using a separate connection
+    print("Checking remaining symbols...")
     with PostgresDatabaseManager() as db:
-        remaining = db.fetch_query("""
+        remaining_nyse = db.fetch_query("""
             SELECT COUNT(*) 
             FROM listing_status ls 
             LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
             WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
             AND ls.exchange = %s
         """, ('NYSE',))[0][0]
-        print(f"Remaining NYSE symbols to process: {remaining}")
+        
+        remaining_nasdaq = db.fetch_query("""
+            SELECT COUNT(*) 
+            FROM listing_status ls 
+            LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
+            WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
+            AND ls.exchange = %s
+        """, ('NASDAQ',))[0][0]
+        
+        print(f"Remaining NYSE symbols to process: {remaining_nyse}")
+        print(f"Remaining NASDAQ symbols to process: {remaining_nasdaq}")
 
 if __name__ == "__main__":
     main()

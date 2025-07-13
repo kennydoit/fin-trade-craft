@@ -349,6 +349,32 @@ CREATE INDEX IF NOT EXISTS idx_realtime_options_expiration ON realtime_options(e
 CREATE INDEX IF NOT EXISTS idx_realtime_options_type_strike ON realtime_options(option_type, strike);
 CREATE INDEX IF NOT EXISTS idx_realtime_options_timestamp ON realtime_options(quote_timestamp);
 
+-- Table for storing insider transactions data
+CREATE TABLE IF NOT EXISTS insider_transactions (
+    transaction_id      SERIAL PRIMARY KEY,
+    symbol_id           INTEGER NOT NULL,
+    symbol              VARCHAR(20) NOT NULL,
+    transaction_date    DATE NOT NULL,
+    executive           VARCHAR(255) NOT NULL,
+    executive_title     VARCHAR(255),
+    security_type       VARCHAR(100),
+    acquisition_or_disposal VARCHAR(1),  -- 'A' for acquisition, 'D' for disposal
+    shares              DECIMAL(20,4),
+    share_price         DECIMAL(20,4),
+    api_response_status VARCHAR(20) DEFAULT 'pass',
+    created_at          TIMESTAMP DEFAULT NOW(),
+    updated_at          TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE,
+    UNIQUE(symbol_id, transaction_date, executive, security_type, acquisition_or_disposal, shares, share_price)  -- Prevent duplicate transactions
+);
+
+-- Create indexes for insider transactions
+CREATE INDEX IF NOT EXISTS idx_insider_transactions_symbol_id ON insider_transactions(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_insider_transactions_symbol ON insider_transactions(symbol);
+CREATE INDEX IF NOT EXISTS idx_insider_transactions_date ON insider_transactions(transaction_date);
+CREATE INDEX IF NOT EXISTS idx_insider_transactions_executive ON insider_transactions(executive);
+CREATE INDEX IF NOT EXISTS idx_insider_transactions_type ON insider_transactions(acquisition_or_disposal);
+
 CREATE TRIGGER update_listing_status_updated_at BEFORE UPDATE ON listing_status FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_overview_updated_at BEFORE UPDATE ON overview FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_time_series_updated_at BEFORE UPDATE ON time_series_daily_adjusted FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -359,3 +385,4 @@ CREATE TRIGGER update_commodities_updated_at BEFORE UPDATE ON commodities FOR EA
 CREATE TRIGGER update_economic_indicators_updated_at BEFORE UPDATE ON economic_indicators FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_historical_options_updated_at BEFORE UPDATE ON historical_options FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_realtime_options_updated_at BEFORE UPDATE ON realtime_options FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_insider_transactions_updated_at BEFORE UPDATE ON insider_transactions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
