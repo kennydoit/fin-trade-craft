@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path(__file__).parent.parent))
 
 from db.postgres_database_manager import PostgresDatabaseManager
@@ -15,8 +16,8 @@ with db_manager as db:
     """
     result = db.fetch_query(query)
     if result:
-        print('Constraints on economic_indicators table:')
+        print("Constraints on economic_indicators table:")
         for row in result:
-            print(f'  {row[0]} ({row[1]}): {row[2]}')
+            print(f"  {row[0]} ({row[1]}): {row[2]}")
     else:
-        print('No constraints found on economic_indicators table')
+        print("No constraints found on economic_indicators table")
