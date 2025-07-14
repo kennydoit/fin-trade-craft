@@ -375,6 +375,31 @@ CREATE INDEX IF NOT EXISTS idx_insider_transactions_date ON insider_transactions
 CREATE INDEX IF NOT EXISTS idx_insider_transactions_executive ON insider_transactions(executive);
 CREATE INDEX IF NOT EXISTS idx_insider_transactions_type ON insider_transactions(acquisition_or_disposal);
 
+-- Table for storing earnings call transcripts data
+CREATE TABLE IF NOT EXISTS earnings_call_transcripts (
+    transcript_id       SERIAL PRIMARY KEY,
+    symbol_id           INTEGER NOT NULL,
+    symbol              VARCHAR(20) NOT NULL,
+    quarter             VARCHAR(10) NOT NULL,  -- Format: YYYYQM (e.g., 2024Q1)
+    speaker             VARCHAR(255) NOT NULL,
+    title               VARCHAR(255),
+    content             TEXT NOT NULL,
+    content_hash        VARCHAR(32) NOT NULL,  -- MD5 hash of content for uniqueness
+    sentiment           DECIMAL(5,3),  -- Sentiment score (e.g., 0.6, 0.7)
+    api_response_status VARCHAR(20) DEFAULT 'pass',
+    created_at          TIMESTAMP DEFAULT NOW(),
+    updated_at          TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE,
+    UNIQUE(symbol_id, quarter, speaker, content_hash)  -- Use hash instead of full content
+);
+
+-- Create indexes for earnings call transcripts
+CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol_id ON earnings_call_transcripts(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol ON earnings_call_transcripts(symbol);
+CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON earnings_call_transcripts(quarter);
+CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON earnings_call_transcripts(speaker);
+CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON earnings_call_transcripts(sentiment);
+
 CREATE TRIGGER update_listing_status_updated_at BEFORE UPDATE ON listing_status FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_overview_updated_at BEFORE UPDATE ON overview FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_time_series_updated_at BEFORE UPDATE ON time_series_daily_adjusted FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -386,3 +411,5 @@ CREATE TRIGGER update_economic_indicators_updated_at BEFORE UPDATE ON economic_i
 CREATE TRIGGER update_historical_options_updated_at BEFORE UPDATE ON historical_options FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_realtime_options_updated_at BEFORE UPDATE ON realtime_options FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_insider_transactions_updated_at BEFORE UPDATE ON insider_transactions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_earnings_call_transcripts_updated_at BEFORE UPDATE ON earnings_call_transcripts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_earnings_call_transcripts_updated_at BEFORE UPDATE ON earnings_call_transcripts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
