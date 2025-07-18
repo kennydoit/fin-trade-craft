@@ -523,18 +523,20 @@ def main():
     # Configuration options for different use cases:
     
     # Option 1: Small test batch with IPO-based quarters (recommended)
-    extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=1000)  # Uses IPO dates automatically
+    # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=2600)  # Uses IPO dates automatically
+    extractor.run_etl_incremental(exchange_filter='NYSE', limit=1400)  # Uses IPO dates automatically
     
     # Option 2: Process by exchange in batches with IPO-based quarters
     # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=10)
     # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
-    
+
+
+ 
     
     # Option 3: Large batch processing with IPO-based quarters
-    # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=100)
-    
+    # extractor.run_etl_incremYTREGFU8UF
     # Option 4: Override with specific quarters (bypasses IPO logic)
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=5, quarters_to_process=['2024Q3', '2024Q2', '2024Q1', '2023Q4'])
+    # extractor.run_etl_incremental(exchange_filter='NYSE', limits_to_process=['2024Q3', '2024Q2', '2024Q1', '2023Q4'])
     
     # Option 5: Small test with recent quarters only
     # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=5, quarters_to_process=['2024Q3', '2024Q2'])
