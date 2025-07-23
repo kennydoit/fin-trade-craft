@@ -9,7 +9,7 @@ authors = [
     {name = "Ken Moore", email = "ken.r.moore@gmail.com"},
 ]
 dependencies = [
-    "exchange_calendars>=4.10.1",    
+    "exchange_calendars>=4.10.1",
     "numpy>=1.23.0",
     "pandas>=2.0.0",
     "pandas_ta>=0.3.14b0",
