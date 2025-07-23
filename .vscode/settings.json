@@ -18,5 +18,18 @@
         "titleBar.inactiveBackground": "#14b7c999",
         "titleBar.inactiveForeground": "#15202b99"
     },
-    "peacock.color": "#14b7c9"
+    "peacock.color": "#14b7c9",
+    "python.defaultInterpreterPath": "./.venv/Scripts/python.exe",
+    "python.terminal.activateEnvironment": true,
+    "code-runner.executorMap": {
+        "python": "$pythonPath -u $fullFileName"
+    },
+    "code-runner.fileDirectoryAsCwd": true,
+    "code-runner.runInTerminal": true,
+    "code-runner.preserveFocus": false,
+    "code-runner.clearPreviousOutput": false,
+    "code-runner.saveFileBeforeRun": true,
+    "code-runner.executorMapByFileExtension": {
+        ".py": "$pythonPath -u $fullFileName"
+    }
 }
