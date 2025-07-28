@@ -1,0 +1,13 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CLASSES_ROOT\Python.File\shell\Run with Python]
+@="Run with Python (fin-trade-craft env)"
+
+[HKEY_CLASSES_ROOT\Python.File\shell\Run with Python\command]
+@="\"C:\\Users\\Kenrm\\repositories\\fin-trade-craft\\.venv\\Scripts\\python.exe\" \"%1\" & pause"
+
+[HKEY_CLASSES_ROOT\Python.File\shell\Run in Terminal]
+@="Run in Terminal (fin-trade-craft env)"
+
+[HKEY_CLASSES_ROOT\Python.File\shell\Run in Terminal\command]
+@="powershell.exe -NoExit -Command \"cd '%L'; & 'C:\\Users\\Kenrm\\repositories\\fin-trade-craft\\.venv\\Scripts\\python.exe' '%1'\""

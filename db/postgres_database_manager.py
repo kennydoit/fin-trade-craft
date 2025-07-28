@@ -305,6 +305,99 @@ class PostgresDatabaseManager:
         finally:
             cursor.close()
 
+    def table_exists(self, table_name, schema_name='public'):
+        """Check if a table exists in the specified schema."""
+        if not self.connection:
+            raise Exception("Database connection is not established.")
+        
+        cursor = self.connection.cursor()
+        try:
+            query = """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_schema = %s AND table_name = %s
+                );
+            """
+            cursor.execute(query, (schema_name, table_name))
+            return cursor.fetchone()[0]
+        except psycopg2.Error as e:
+            raise Exception(f"Error checking table existence: {e}")
+        finally:
+            cursor.close()
+
+    def get_table_info(self, table_name, schema_name='public'):
+        """Get information about a table including row count and columns."""
+        if not self.connection:
+            raise Exception("Database connection is not established.")
+        
+        cursor = self.connection.cursor()
+        try:
+            # Get column information
+            columns_query = """
+                SELECT column_name, data_type, is_nullable, column_default
+                FROM information_schema.columns
+                WHERE table_schema = %s AND table_name = %s
+                ORDER BY ordinal_position;
+            """
+            cursor.execute(columns_query, (schema_name, table_name))
+            columns = cursor.fetchall()
+            
+            # Get row count
+            count_query = f"SELECT COUNT(*) FROM {schema_name}.{table_name};"
+            cursor.execute(count_query)
+            row_count = cursor.fetchone()[0]
+            
+            return {
+                'table_name': table_name,
+                'schema_name': schema_name,
+                'row_count': row_count,
+                'columns': columns
+            }
+        except psycopg2.Error as e:
+            raise Exception(f"Error getting table info: {e}")
+        finally:
+            cursor.close()
+
+    def list_schemas(self):
+        """List all schemas in the database."""
+        if not self.connection:
+            raise Exception("Database connection is not established.")
+        
+        cursor = self.connection.cursor()
+        try:
+            query = """
+                SELECT schema_name 
+                FROM information_schema.schemata 
+                WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+                ORDER BY schema_name;
+            """
+            cursor.execute(query)
+            return [row[0] for row in cursor.fetchall()]
+        except psycopg2.Error as e:
+            raise Exception(f"Error listing schemas: {e}")
+        finally:
+            cursor.close()
+
+    def list_tables(self, schema_name='public'):
+        """List all tables in the specified schema."""
+        if not self.connection:
+            raise Exception("Database connection is not established.")
+        
+        cursor = self.connection.cursor()
+        try:
+            query = """
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = %s AND table_type = 'BASE TABLE'
+                ORDER BY table_name;
+            """
+            cursor.execute(query, (schema_name,))
+            return [row[0] for row in cursor.fetchall()]
+        except psycopg2.Error as e:
+            raise Exception(f"Error listing tables: {e}")
+        finally:
+            cursor.close()
+
     def __enter__(self):
         """Context manager entry."""
         if not self.connection:

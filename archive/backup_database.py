@@ -4,54 +4,54 @@ Create PostgreSQL database backup for migration to new desktop.
 """
 
 import subprocess
-import os
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
 
 def create_database_backup():
     """Create a full database backup using pg_dump."""
-    
+
     # Create backup directory
     backup_dir = Path("database_backups")
     backup_dir.mkdir(exist_ok=True)
-    
+
     # Generate backup filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_file = backup_dir / f"fin_trade_craft_backup_{timestamp}.sql"
-    
-    print(f"Creating PostgreSQL database backup...")
+
+    print("Creating PostgreSQL database backup...")
     print(f"Backup location: {backup_file.absolute()}")
-    print(f"Database size: 11 GB - this may take several minutes...")
-    
+    print("Database size: 11 GB - this may take several minutes...")
+
     # pg_dump command
     # You may need to adjust the path to pg_dump if it's not in PATH
     pg_dump_cmd = [
         "pg_dump",
         "-h", "localhost",
-        "-p", "5432", 
+        "-p", "5432",
         "-U", "postgres",  # You may need to change this username
         "-d", "fin_trade_craft",
         "-f", str(backup_file),
         "--verbose",
         "--no-password"  # Remove this if you need password prompt
     ]
-    
+
     try:
         print("Running pg_dump command...")
         print(f"Command: {' '.join(pg_dump_cmd)}")
-        
-        result = subprocess.run(pg_dump_cmd, capture_output=True, text=True)
-        
+
+        result = subprocess.run(pg_dump_cmd, check=False, capture_output=True, text=True)
+
         if result.returncode == 0:
-            print(f"✅ Backup created successfully!")
+            print("✅ Backup created successfully!")
             print(f"📁 Backup file: {backup_file.absolute()}")
             print(f"📏 File size: {backup_file.stat().st_size / (1024*1024*1024):.2f} GB")
-            
+
             # Also create a compressed backup
             print("\nCreating compressed backup...")
             compressed_cmd = [
                 "pg_dump",
-                "-h", "localhost", 
+                "-h", "localhost",
                 "-p", "5432",
                 "-U", "postgres",
                 "-d", "fin_trade_craft",
@@ -60,42 +60,42 @@ def create_database_backup():
                 "--verbose",
                 "--no-password"
             ]
-            
-            result2 = subprocess.run(compressed_cmd, capture_output=True, text=True)
+
+            result2 = subprocess.run(compressed_cmd, check=False, capture_output=True, text=True)
             if result2.returncode == 0:
                 compressed_file = backup_file.with_suffix('.sql.gz')
-                print(f"✅ Compressed backup created!")
+                print("✅ Compressed backup created!")
                 print(f"📁 Compressed file: {compressed_file.absolute()}")
                 print(f"📏 Compressed size: {compressed_file.stat().st_size / (1024*1024*1024):.2f} GB")
         else:
-            print(f"❌ Backup failed!")
+            print("❌ Backup failed!")
             print(f"Error: {result.stderr}")
             print("\nTroubleshooting:")
             print("1. Make sure pg_dump is in your PATH")
             print("2. Check if PostgreSQL bin directory is: C:\\Program Files\\PostgreSQL\\17\\bin")
             print("3. You may need to set PGPASSWORD environment variable")
-            
+
     except FileNotFoundError:
         print("❌ pg_dump not found!")
         print("\nTo fix this:")
         print("1. Add PostgreSQL bin directory to PATH:")
         print("   C:\\Program Files\\PostgreSQL\\17\\bin")
         print("2. Or use full path to pg_dump.exe")
-        
+
         # Try with full path
         full_path_cmd = pg_dump_cmd.copy()
         full_path_cmd[0] = "C:\\Program Files\\PostgreSQL\\17\\bin\\pg_dump.exe"
-        
+
         print(f"\nTrying with full path: {full_path_cmd[0]}")
         try:
-            result = subprocess.run(full_path_cmd, capture_output=True, text=True)
+            result = subprocess.run(full_path_cmd, check=False, capture_output=True, text=True)
             if result.returncode == 0:
-                print(f"✅ Backup created successfully with full path!")
+                print("✅ Backup created successfully with full path!")
             else:
                 print(f"❌ Still failed: {result.stderr}")
         except Exception as e:
             print(f"❌ Full path also failed: {e}")
-    
+
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
 

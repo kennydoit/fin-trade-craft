@@ -115,3 +115,96 @@ python data_pipeline/extract/extract_time_series_daily_adjusted.py
 
 All extractors use PostgreSQL for data storage and include built-in rate limiting, duplicate prevention, and error handling.
 
+## Code Maintenance
+
+### Linting and Formatting
+
+This project uses **Ruff** for fast Python linting and **Black** for code formatting to maintain consistent code quality.
+
+#### Install Development Tools
+
+```bash
+# Install ruff and black for code maintenance
+uv add --dev ruff black
+
+# Or using pip if preferred
+pip install ruff black
+```
+
+#### Linting with Ruff
+
+```bash
+# Lint all Python files in the project
+ruff check .
+
+# Lint specific directory
+ruff check data_pipeline/
+
+# Lint specific file
+ruff check data_pipeline/extract/extract_commodities.py
+
+# Auto-fix linting issues where possible
+ruff check . --fix
+
+# Show detailed output with rule explanations
+ruff check . --show-source
+```
+
+#### Formatting with Black
+
+```bash
+# Format all Python files in the project
+black .
+
+# Format specific directory
+black data_pipeline/
+
+# Format specific file
+black data_pipeline/extract/extract_commodities.py
+
+# Check formatting without making changes (dry run)
+black . --check
+
+# Show diff of what would be changed
+black . --diff
+```
+
+#### Combined Workflow
+
+```bash
+# Run both linting and formatting in sequence
+ruff check . --fix && black .
+
+# Check code quality without making changes
+ruff check . && black . --check
+```
+
+#### VS Code Integration
+
+For automatic formatting and linting in VS Code, add these settings to `.vscode/settings.json`:
+
+```json
+{
+    "python.linting.enabled": true,
+    "python.linting.ruffEnabled": true,
+    "python.formatting.provider": "black",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true
+    }
+}
+```
+
+#### Pre-commit Hooks (Optional)
+
+Install pre-commit hooks to automatically run linting and formatting:
+
+```bash
+# Install pre-commit
+uv add --dev pre-commit
+
+# Set up pre-commit hooks
+pre-commit install
+
+# Run hooks manually on all files
+pre-commit run --all-files
