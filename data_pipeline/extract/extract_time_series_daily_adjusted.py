@@ -40,11 +40,31 @@ class TimeSeriesExtractor:
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
 
-    def load_valid_symbols(self, exchange_filter=None, limit=None):
-        """Load valid stock symbols from the database with their symbol_ids."""
+    def load_valid_symbols(self, exchange_filter=None, asset_type_filter=None, limit=None):
+        """Load valid symbols from the database with their symbol_ids.
+        
+        Args:
+            exchange_filter: Filter by exchange (string or list of strings)
+            asset_type_filter: Filter by asset type (string or list of strings). 
+                             Defaults to 'Stock' for backward compatibility.
+            limit: Limit number of results
+        """
         with self.db_manager as db:
-            base_query = "SELECT symbol_id, symbol FROM listing_status WHERE asset_type = 'Stock'"
+            base_query = "SELECT symbol_id, symbol FROM extracted.listing_status WHERE 1=1"
             params = []
+
+            # Handle asset_type filter (default to 'Stock' for backward compatibility)
+            if asset_type_filter is None:
+                asset_type_filter = 'Stock'
+            
+            if asset_type_filter:
+                if isinstance(asset_type_filter, list):
+                    placeholders = ",".join(["%s" for _ in asset_type_filter])
+                    base_query += f" AND asset_type IN ({placeholders})"
+                    params.extend(asset_type_filter)
+                else:
+                    base_query += " AND asset_type = %s"
+                    params.append(asset_type_filter)
 
             if exchange_filter:
                 if isinstance(exchange_filter, list):
@@ -62,28 +82,43 @@ class TimeSeriesExtractor:
             result = db.fetch_query(base_query, params)
             return {row[1]: row[0] for row in result}
 
-    def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
-        """Load symbols that haven't been processed yet (not in time_series_daily_adjusted table)."""
+    def load_unprocessed_symbols(self, exchange_filter=None, asset_type_filter=None, limit=None):
+        """Load symbols that haven't been processed yet (not in time_series_daily_adjusted table).
+        
+        Args:
+            exchange_filter: Filter by exchange (string or list of strings)
+            asset_type_filter: Filter by asset type (string or list of strings). 
+                             Defaults to 'Stock' for backward compatibility.
+            limit: Limit number of results
+        """
         with self.db_manager as db:
-            # First ensure the table exists, or create the schema
-            if not db.table_exists("time_series_daily_adjusted"):
-                # Initialize schema to create the table
-                schema_path = (
-                    Path(__file__).parent.parent.parent
-                    / "db"
-                    / "schema"
-                    / "postgres_stock_db_schema.sql"
-                )
-                db.initialize_schema(schema_path)
+            # Check if the table exists in extracted schema (no need to initialize if it exists)
+            if not db.table_exists("time_series_daily_adjusted", "extracted"):
+                print("⚠️  Warning: time_series_daily_adjusted table not found in extracted schema.")
+                print("   Please ensure the database migration has been completed.")
+                return {}
 
             # Now we can safely query with LEFT JOIN
             base_query = """
                 SELECT ls.symbol_id, ls.symbol 
-                FROM listing_status ls 
-                LEFT JOIN time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
-                WHERE ls.asset_type = 'Stock' AND ts.symbol_id IS NULL
+                FROM extracted.listing_status ls 
+                LEFT JOIN extracted.time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
+                WHERE ts.symbol_id IS NULL
             """
             params = []
+
+            # Handle asset_type filter (default to 'Stock' for backward compatibility)
+            if asset_type_filter is None:
+                asset_type_filter = 'Stock'
+            
+            if asset_type_filter:
+                if isinstance(asset_type_filter, list):
+                    placeholders = ",".join(["%s" for _ in asset_type_filter])
+                    base_query += f" AND ls.asset_type IN ({placeholders})"
+                    params.extend(asset_type_filter)
+                else:
+                    base_query += " AND ls.asset_type = %s"
+                    params.append(asset_type_filter)
 
             if exchange_filter:
                 if isinstance(exchange_filter, list):
@@ -245,22 +280,17 @@ class TimeSeriesExtractor:
         print(f"Loading {len(records)} records into database...")
 
         with self.db_manager as db:
-            # Initialize schema if tables don't exist
-            schema_path = (
-                Path(__file__).parent.parent.parent
-                / "db"
-                / "schema"
-                / "postgres_stock_db_schema.sql"
-            )
-            if not db.table_exists("time_series_daily_adjusted"):
-                print("Initializing database schema...")
-                db.initialize_schema(schema_path)
+            # Check if the table exists in extracted schema (no need to initialize if it exists)
+            if not db.table_exists("time_series_daily_adjusted", "extracted"):
+                print("⚠️  Warning: time_series_daily_adjusted table not found in extracted schema.")
+                print("   Please ensure the database migration has been completed.")
+                return
 
             # Prepare insert query using PostgreSQL syntax
             columns = list(records[0].keys())
             placeholders = ", ".join(["%s" for _ in columns])
             insert_query = f"""
-                INSERT INTO time_series_daily_adjusted ({', '.join(columns)}) 
+                INSERT INTO extracted.time_series_daily_adjusted ({', '.join(columns)}) 
                 VALUES ({placeholders})
                 ON CONFLICT (symbol_id, date) DO UPDATE SET
                     open = EXCLUDED.open,
@@ -293,22 +323,17 @@ class TimeSeriesExtractor:
 
         print(f"Loading {len(records)} records into database...")
 
-        # Initialize schema if tables don't exist
-        schema_path = (
-            Path(__file__).parent.parent.parent
-            / "db"
-            / "schema"
-            / "postgres_stock_db_schema.sql"
-        )
-        if not db_manager.table_exists("time_series_daily_adjusted"):
-            print("Initializing database schema...")
-            db_manager.initialize_schema(schema_path)
+        # Check if the table exists in extracted schema (no need to initialize if it exists)
+        if not db_manager.table_exists("time_series_daily_adjusted", "extracted"):
+            print("⚠️  Warning: time_series_daily_adjusted table not found in extracted schema.")
+            print("   Please ensure the database migration has been completed.")
+            return
 
         # Prepare insert query using PostgreSQL syntax
         columns = list(records[0].keys())
         placeholders = ", ".join(["%s" for _ in columns])
         insert_query = f"""
-            INSERT INTO time_series_daily_adjusted ({', '.join(columns)}) 
+            INSERT INTO extracted.time_series_daily_adjusted ({', '.join(columns)}) 
             VALUES ({placeholders})
             ON CONFLICT (symbol_id, date) DO UPDATE SET
                 open = EXCLUDED.open,
@@ -331,27 +356,43 @@ class TimeSeriesExtractor:
             f"Successfully loaded {rows_affected} records into time_series_daily_adjusted table"
         )
 
-    def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
-        """Load symbols that haven't been processed yet using provided database connection."""
-        # First ensure the table exists, or create the schema
-        if not db.table_exists("time_series_daily_adjusted"):
-            # Initialize schema to create the table
-            schema_path = (
-                Path(__file__).parent.parent.parent
-                / "db"
-                / "schema"
-                / "postgres_stock_db_schema.sql"
-            )
-            db.initialize_schema(schema_path)
+    def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, asset_type_filter=None, limit=None):
+        """Load symbols that haven't been processed yet using provided database connection.
+        
+        Args:
+            db: Database connection
+            exchange_filter: Filter by exchange (string or list of strings)
+            asset_type_filter: Filter by asset type (string or list of strings). 
+                             Defaults to 'Stock' for backward compatibility.
+            limit: Limit number of results
+        """
+        # Check if the table exists in extracted schema (no need to initialize if it exists)
+        if not db.table_exists("time_series_daily_adjusted", "extracted"):
+            print("⚠️  Warning: time_series_daily_adjusted table not found in extracted schema.")
+            print("   Please ensure the database migration has been completed.")
+            return {}
 
         # Now we can safely query with LEFT JOIN
         base_query = """
             SELECT ls.symbol_id, ls.symbol 
-            FROM listing_status ls 
-            LEFT JOIN time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
-            WHERE ls.asset_type = 'Stock' AND ts.symbol_id IS NULL
+            FROM extracted.listing_status ls 
+            LEFT JOIN extracted.time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
+            WHERE ts.symbol_id IS NULL
         """
         params = []
+
+        # Handle asset_type filter (default to 'Stock' for backward compatibility)
+        if asset_type_filter is None:
+            asset_type_filter = 'Stock'
+        
+        if asset_type_filter:
+            if isinstance(asset_type_filter, list):
+                placeholders = ",".join(["%s" for _ in asset_type_filter])
+                base_query += f" AND ls.asset_type IN ({placeholders})"
+                params.extend(asset_type_filter)
+            else:
+                base_query += " AND ls.asset_type = %s"
+                params.append(asset_type_filter)
 
         if exchange_filter:
             if isinstance(exchange_filter, list):
@@ -371,15 +412,35 @@ class TimeSeriesExtractor:
         result = db.fetch_query(base_query, params)
         return {row[1]: row[0] for row in result}
 
-    def get_remaining_symbols_count_with_db(self, db, exchange_filter=None):
-        """Get count of remaining unprocessed symbols using provided database connection."""
+    def get_remaining_symbols_count_with_db(self, db, exchange_filter=None, asset_type_filter=None):
+        """Get count of remaining unprocessed symbols using provided database connection.
+        
+        Args:
+            db: Database connection
+            exchange_filter: Filter by exchange (string or list of strings)
+            asset_type_filter: Filter by asset type (string or list of strings). 
+                             Defaults to 'Stock' for backward compatibility.
+        """
         base_query = """
             SELECT COUNT(DISTINCT ls.symbol_id)
-            FROM listing_status ls 
-            LEFT JOIN time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
-            WHERE ls.asset_type = 'Stock' AND ts.symbol_id IS NULL
+            FROM extracted.listing_status ls 
+            LEFT JOIN extracted.time_series_daily_adjusted ts ON ls.symbol_id = ts.symbol_id 
+            WHERE ts.symbol_id IS NULL
         """
         params = []
+
+        # Handle asset_type filter (default to 'Stock' for backward compatibility)
+        if asset_type_filter is None:
+            asset_type_filter = 'Stock'
+        
+        if asset_type_filter:
+            if isinstance(asset_type_filter, list):
+                placeholders = ",".join(["%s" for _ in asset_type_filter])
+                base_query += f" AND ls.asset_type IN ({placeholders})"
+                params.extend(asset_type_filter)
+            else:
+                base_query += " AND ls.asset_type = %s"
+                params.append(asset_type_filter)
 
         if exchange_filter:
             if isinstance(exchange_filter, list):
@@ -393,19 +454,21 @@ class TimeSeriesExtractor:
         return db.fetch_query(base_query, params)[0][0]
 
     def run_etl_incremental(
-        self, exchange_filter=None, limit=None, start_date=None, end_date=None
+        self, exchange_filter=None, asset_type_filter=None, limit=None, start_date=None, end_date=None
     ):
         """Run ETL only for symbols not yet processed.
 
         Args:
             exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
+            asset_type_filter: Filter by asset type (e.g., 'Stock', 'ETF', ['Stock', 'ETF']). 
+                             Defaults to 'Stock' for backward compatibility.
             limit: Maximum number of symbols to process (for chunking)
             start_date: Start date filter (YYYY-MM-DD format)
             end_date: End date filter (YYYY-MM-DD format)
         """
         print("Starting Incremental Time Series ETL process...")
         print(
-            f"Configuration: exchange={exchange_filter}, limit={limit}, output_size={self.output_size}"
+            f"Configuration: exchange={exchange_filter}, asset_type={asset_type_filter or 'Stock'}, limit={limit}, output_size={self.output_size}"
         )
         if start_date or end_date:
             print(f"Date range: {start_date or 'beginning'} to {end_date or 'end'}")
@@ -416,7 +479,7 @@ class TimeSeriesExtractor:
             with db_manager as db:
                 # Load only unprocessed symbols using the shared connection
                 symbol_mapping = self.load_unprocessed_symbols_with_db(
-                    db, exchange_filter, limit
+                    db, exchange_filter, asset_type_filter, limit
                 )
                 symbols = list(symbol_mapping.keys())
                 print(f"Found {len(symbols)} unprocessed symbols")
@@ -469,13 +532,14 @@ class TimeSeriesExtractor:
 
                 # Get remaining symbols count for summary using the same connection
                 remaining_count = self.get_remaining_symbols_count_with_db(
-                    db, exchange_filter
+                    db, exchange_filter, asset_type_filter
                 )
 
             # Print summary
             print("\n" + "=" * 50)
             print("Incremental Time Series ETL Summary:")
             print(f"  Exchange: {exchange_filter or 'All exchanges'}")
+            print(f"  Asset Type: {asset_type_filter or 'Stock'}")
             print(f"  Total symbols processed: {len(symbols)}")
             print(f"  Successful symbols: {success_count}")
             print(f"  Failed symbols: {fail_count}")
@@ -498,27 +562,44 @@ def main():
 
     # Configuration options for different use cases:
 
-    # Option 1: Initial full historical data collection (recommended for first run)
-    extractor_full = TimeSeriesExtractor(output_size="full")
+    # Option 1: Initial full historical data collection for stocks (recommended for first run)
+    # extractor_full = TimeSeriesExtractor(output_size="full")
     # extractor_full.run_etl_incremental(exchange_filter='NYSE', limit=4000)  # Increased for premium tier
-    extractor_full.run_etl_incremental(
-        exchange_filter="NASDAQ", limit=6000
-    )  # Increased for premium tier
+    # extractor_full.run_etl_incremental(
+    #     exchange_filter="NASDAQ", limit=6000
+    # )  # Increased for premium tier
 
-    # Option 2: Daily updates with compact data (for ongoing collection)
+    # Option 2: Extract ETFs specifically 
+    extractor_etf = TimeSeriesExtractor(output_size="full")
+    extractor_etf.run_etl_incremental(
+        exchange_filter=['NYSE', 'NASDAQ'], 
+        asset_type_filter='ETF',
+        limit=1500  # Start with just 5 ETFs for testing
+    )
+
+    # Option 3: Extract both stocks and ETFs
+    # extractor_mixed = TimeSeriesExtractor(output_size="full")
+    # extractor_mixed.run_etl_incremental(
+    #     exchange_filter='NASDAQ',
+    #     asset_type_filter=['Stock', 'ETF'],
+    #     limit=500
+    # )
+
+    # Option 4: Daily updates with compact data (for ongoing collection)
     # extractor_compact = TimeSeriesExtractor(output_size="compact")
     # extractor_compact.run_etl_incremental(exchange_filter='NASDAQ', limit=10)
 
-    # Option 3: Historical data with date range filtering
+    # Option 5: Historical data with date range filtering
     # extractor_filtered = TimeSeriesExtractor(output_size="full")
     # extractor_filtered.run_etl_incremental(
     #     exchange_filter='NASDAQ',
+    #     asset_type_filter='Stock',  # Can specify asset type explicitly
     #     limit=5,
     #     start_date='2020-01-01',  # Only data from 2020 onwards
     #     end_date='2023-12-31'     # Only data until end of 2023
     # )
 
-    # Option 4: Large batch processing (manage memory with chunks)
+    # Option 6: Large batch processing (manage memory with chunks)
     # extractor_batch = TimeSeriesExtractor(output_size="full")
     # extractor_batch.run_etl_incremental(exchange_filter='NASDAQ', limit=50)
 
