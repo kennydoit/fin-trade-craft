@@ -570,11 +570,19 @@ def main():
     # )  # Increased for premium tier
 
     # Option 2: Extract ETFs specifically 
+    # extractor_etf = TimeSeriesExtractor(output_size="full")
+    # extractor_etf.run_etl_incremental(
+    #     exchange_filter=['NYSE', 'NASDAQ', 'NYSE ARCA', 'BATS'], 
+    #     asset_type_filter='ETF',
+    #     limit=1500  # Start with just 5 ETFs for testing
+    # )
+
+    # Option 2: Extract ETFs specifically 
     extractor_etf = TimeSeriesExtractor(output_size="full")
     extractor_etf.run_etl_incremental(
-        exchange_filter=['NYSE', 'NASDAQ'], 
+        exchange_filter=['NYSE ARCA', 'BATS', 'NYSE MKT'], 
         asset_type_filter='ETF',
-        limit=1500  # Start with just 5 ETFs for testing
+        limit=1700  # Start with just 5 ETFs for testing
     )
 
     # Option 3: Extract both stocks and ETFs

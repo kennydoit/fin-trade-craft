@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS listing_status (
     ipo_date        DATE,
     delisting_date  DATE,
     status          VARCHAR(20),
+    state           VARCHAR(20) DEFAULT 'active',
     created_at      TIMESTAMP DEFAULT NOW(),
     updated_at      TIMESTAMP DEFAULT NOW()
 );
@@ -411,5 +412,4 @@ CREATE TRIGGER update_economic_indicators_updated_at BEFORE UPDATE ON economic_i
 CREATE TRIGGER update_historical_options_updated_at BEFORE UPDATE ON historical_options FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_realtime_options_updated_at BEFORE UPDATE ON realtime_options FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_insider_transactions_updated_at BEFORE UPDATE ON insider_transactions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_earnings_call_transcripts_updated_at BEFORE UPDATE ON earnings_call_transcripts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_earnings_call_transcripts_updated_at BEFORE UPDATE ON earnings_call_transcripts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
