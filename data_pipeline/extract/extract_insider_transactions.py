@@ -540,7 +540,8 @@ def main():
     # extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=10)  # Small test first
 
     # Option 2: Full refresh mode - re-process all symbols to get latest transactions
-    extractor.run_etl_incremental(exchange_filter="NASDAQ", force_refresh=True)
+    # extractor.run_etl_incremental(exchange_filter="NASDAQ", force_refresh=True)
+    extractor.run_etl_incremental(exchange_filter="NYSE", force_refresh=True)
 
     # Option 3: Process by exchange in batches
     # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=100)
