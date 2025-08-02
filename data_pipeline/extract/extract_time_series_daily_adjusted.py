@@ -582,7 +582,7 @@ def main():
     extractor_etf.run_etl_incremental(
         exchange_filter=['NYSE ARCA', 'BATS', 'NYSE MKT'], 
         asset_type_filter='ETF',
-        limit=1700  # Start with just 5 ETFs for testing
+        limit=5000  # Start with just 5 ETFs for testing
     )
 
     # Option 3: Extract both stocks and ETFs
