@@ -373,8 +373,9 @@ class BalanceSheetExtractor:
         if db_connection:
             # Use existing connection
             db = db_connection
-            # Skip table existence check for now since we create it if needed
-            # The table should already exist from load_unprocessed_symbols
+            # Ensure the table exists before inserting
+            if not db.table_exists("extracted.balance_sheet"):
+                self.create_balance_sheet_table(db)
 
             # Prepare insert query - use simple INSERT since there's no proper unique constraint
             columns = list(records[0].keys())
@@ -402,6 +403,8 @@ class BalanceSheetExtractor:
     def create_balance_sheet_table(self, db):
         """Create the balance_sheet table if it doesn't exist."""
         create_table_sql = """
+            CREATE SCHEMA IF NOT EXISTS extracted;
+
             CREATE TABLE IF NOT EXISTS extracted.balance_sheet (
                 symbol_id                               INTEGER NOT NULL,
                 symbol                                  VARCHAR(20) NOT NULL,
@@ -457,139 +460,6 @@ class BalanceSheetExtractor:
         db.execute_query(create_table_sql)
         print("Created extracted.balance_sheet table with indexes")
 
-    def run_etl_incremental_with_db(self, db, exchange_filter=None, limit=None):
-        """Run ETL only for symbols not yet processed using provided database connection.
-
-        Args:
-            db: Database connection object
-            exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
-            limit: Maximum number of symbols to process (for chunking)
-        """
-        print("Starting Incremental Balance Sheet ETL process...")
-        print(f"Configuration: exchange={exchange_filter}, limit={limit}")
-
-        try:
-            # Ensure the table exists first
-            if not db.table_exists("extracted.balance_sheet"):
-                # Create just the balance_sheet table
-                self.create_balance_sheet_table(db)
-
-            # Load only unprocessed symbols
-            base_query = """
-                SELECT ls.symbol_id, ls.symbol
-                FROM listing_status ls
-                LEFT JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
-                WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
-            """
-            params = []
-
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ",".join(["%s" for _ in exchange_filter])
-                    base_query += f" AND ls.exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND ls.exchange = %s"
-                    params.append(exchange_filter)
-
-            base_query += " GROUP BY ls.symbol_id, ls.symbol"
-
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-
-            result = db.fetch_query(base_query, params)
-            symbol_mapping = {row[1]: row[0] for row in result}
-
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} unprocessed symbols")
-
-            if not symbols:
-                print("No unprocessed symbols found")
-                return
-
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
-
-                try:
-                    # Extract data for this symbol
-                    data, status = self.extract_single_balance_sheet(symbol)
-
-                    # Transform data
-                    records = self.transform_balance_sheet_data(
-                        symbol, symbol_id, data, status
-                    )
-
-                    if records:
-                        # Load records for this symbol using the same database connection
-                        self.load_balance_sheet_data(records, db)
-                        total_records += len(records)
-                        success_count += 1
-                        print(
-                            f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]"
-                        )
-                    else:
-                        fail_count += 1
-                        print(
-                            f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]"
-                        )
-
-                except Exception as e:
-                    fail_count += 1
-                    print(
-                        f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]"
-                    )
-                    # Continue processing other symbols even if one fails
-                    continue
-
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
-
-            # Count remaining unprocessed symbols
-            base_query = """
-                SELECT COUNT(DISTINCT ls.symbol_id)
-                FROM listing_status ls
-                LEFT JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
-                WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
-            """
-            params = []
-
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ",".join(["%s" for _ in exchange_filter])
-                    base_query += f" AND ls.exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND ls.exchange = %s"
-                    params.append(exchange_filter)
-
-            remaining_count = db.fetch_query(base_query, params)[0][0]
-
-            # Print summary
-            print("\n" + "=" * 50)
-            print("Incremental Balance Sheet ETL Summary:")
-            print(f"  Exchange: {exchange_filter or 'All exchanges'}")
-            print(f"  Total symbols processed: {len(symbols)}")
-            print(f"  Successful symbols: {success_count}")
-            print(f"  Failed symbols: {fail_count}")
-            print(f"  Remaining symbols: {remaining_count}")
-            print(f"  Total records loaded: {total_records:,}")
-            print(
-                f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}"
-            )
-            print("=" * 50)
-
-            print("Incremental Balance Sheet ETL process completed successfully!")
-
-        except Exception as e:
-            print(f"Incremental Balance Sheet ETL process failed: {e}")
-            raise
-
     def run_etl_incremental(self, exchange_filter=None, limit=None):
         """Run ETL only for symbols not yet processed.
 
@@ -597,176 +467,22 @@ class BalanceSheetExtractor:
             exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
             limit: Maximum number of symbols to process (for chunking)
         """
-        with self.db_manager as db:
-            self.run_etl_incremental_with_db(db, exchange_filter, limit)
-
-    def load_symbols_for_update(
-        self, exchange_filter=None, limit=None, min_age_days=90
-    ):
-        """Load symbols that need data updates (existing symbols that haven't been updated recently).
-
-        Args:
-            exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
-            limit: Maximum number of symbols to process
-            min_age_days: Minimum days since last update (default 90 days for quarterly updates)
-        """
-        with self.db_manager as db:
-            # First ensure the table exists, or create the schema
-            if not db.table_exists("extracted.balance_sheet"):
-                # Create just the balance_sheet table
-                self.create_balance_sheet_table(db)
-                return {}  # No symbols to update if table was just created
-
-            # Find symbols that haven't been updated recently
-            base_query = f"""
-                SELECT ls.symbol_id, ls.symbol, MAX(bs.updated_at) as last_updated
-                FROM listing_status ls
-                INNER JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
-                WHERE ls.asset_type = 'Stock'
-                  AND (bs.updated_at IS NULL OR
-                       datetime(bs.updated_at) < datetime('now', '-{min_age_days} days'))
-            """
-
-            params = []
-
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ",".join(["%s" for _ in exchange_filter])
-                    base_query += f" AND ls.exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND ls.exchange = %s"
-                    params.append(exchange_filter)
-
-            base_query += " GROUP BY ls.symbol_id, ls.symbol"
-
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
-
-    def run_etl_update(self, exchange_filter=None, limit=None, min_age_days=90):
-        """Run ETL to update existing symbols with latest data.
-
-        Args:
-            exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
-            limit: Maximum number of symbols to process (for chunking)
-            min_age_days: Minimum days since last update (default 90 days for quarterly updates)
-        """
-        print("Starting Balance Sheet UPDATE ETL process...")
-        print(
-            f"Configuration: exchange={exchange_filter}, limit={limit}, min_age_days={min_age_days}"
-        )
+        print("Starting Incremental Balance Sheet ETL process...")
+        print(f"Configuration: exchange={exchange_filter}, limit={limit}")
 
         try:
-            # Load symbols that need updates
-            symbol_mapping = self.load_symbols_for_update(
-                exchange_filter, limit, min_age_days
-            )
-            symbols = list(symbol_mapping.keys())
-            print(f"Found {len(symbols)} symbols needing updates")
-
-            if not symbols:
-                print("No symbols need updates")
-                return
-
-            total_records = 0
-            success_count = 0
-            fail_count = 0
-
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
-
-                try:
-                    # Extract fresh data for this symbol
-                    data, status = self.extract_single_balance_sheet(symbol)
-
-                    # Transform data
-                    records = self.transform_balance_sheet_data(
-                        symbol, symbol_id, data, status
-                    )
-
-                    if records:
-                        # Delete existing records for this symbol before inserting fresh data
-                        with self.db_manager as db:
-                            delete_query = "DELETE FROM extracted.balance_sheet WHERE symbol_id = %s"
-                            db.execute_query(delete_query, (symbol_id,))
-                            print(f"Deleted existing records for {symbol}")
-
-                        # Load fresh records for this symbol
-                        self.load_balance_sheet_data(records)
-                        total_records += len(records)
-                        success_count += 1
-                        print(
-                            f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]"
-                        )
-                    else:
-                        fail_count += 1
-                        print(
-                            f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]"
-                        )
-
-                except Exception as e:
-                    fail_count += 1
-                    print(
-                        f"✗ Error updating {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]"
-                    )
-                    # Continue processing other symbols even if one fails
-                    continue
-
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
-
-            # Print summary
-            print("\n" + "=" * 50)
-            print("Balance Sheet UPDATE ETL Summary:")
-            print(f"  Exchange: {exchange_filter or 'All exchanges'}")
-            print(f"  Total symbols updated: {len(symbols)}")
-            print(f"  Successful updates: {success_count}")
-            print(f"  Failed updates: {fail_count}")
-            print(f"  Total records loaded: {total_records:,}")
-            print(
-                f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}"
-            )
-            print("=" * 50)
-
-            print("Balance Sheet UPDATE ETL process completed successfully!")
-
-        except Exception as e:
-            print(f"Balance Sheet UPDATE ETL process failed: {e}")
-            raise
-
-    def run_etl_latest_periods(self, exchange_filter=None, limit=None, periods_back=4):
-        """Run ETL to get only the latest X periods for existing symbols.
-        This is more efficient than full updates when you only need recent data.
-
-        Args:
-            exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
-            limit: Maximum number of symbols to process
-            periods_back: Number of latest periods to keep (default 4 = 1 year of quarters)
-        """
-        print("Starting Balance Sheet LATEST PERIODS ETL process...")
-        print(
-            f"Configuration: exchange={exchange_filter}, limit={limit}, periods_back={periods_back}"
-        )
-
-        try:
-            # Load symbols that already exist in the balance_sheet table
             with self.db_manager as db:
+                # Ensure the table exists first
                 if not db.table_exists("extracted.balance_sheet"):
-                    print(
-                        "Balance sheet table doesn't exist. Use run_etl_incremental first."
-                    )
-                    return
+                    # Create just the balance_sheet table
+                    self.create_balance_sheet_table(db)
 
+                # Load only unprocessed symbols
                 base_query = """
-                    SELECT DISTINCT ls.symbol_id, ls.symbol
+                    SELECT ls.symbol_id, ls.symbol
                     FROM listing_status ls
-                    INNER JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
-                    WHERE ls.asset_type = 'Stock'
+                    LEFT JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
+                    WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
                 """
                 params = []
 
@@ -779,6 +495,8 @@ class BalanceSheetExtractor:
                         base_query += " AND ls.exchange = %s"
                         params.append(exchange_filter)
 
+                base_query += " GROUP BY ls.symbol_id, ls.symbol"
+
                 if limit:
                     base_query += " LIMIT %s"
                     params.append(limit)
@@ -786,130 +504,93 @@ class BalanceSheetExtractor:
                 result = db.fetch_query(base_query, params)
                 symbol_mapping = {row[1]: row[0] for row in result}
 
-            symbols = list(symbol_mapping.keys())
-            print(
-                f"Found {len(symbols)} existing symbols to update with latest periods"
-            )
+                symbols = list(symbol_mapping.keys())
+                print(f"Found {len(symbols)} unprocessed symbols")
 
-            if not symbols:
-                print("No existing symbols found")
-                return
+                if not symbols:
+                    print("No unprocessed symbols found")
+                    return
 
-            total_records = 0
-            success_count = 0
-            fail_count = 0
+                total_records = 0
+                success_count = 0
+                fail_count = 0
 
-            for i, symbol in enumerate(symbols):
-                symbol_id = symbol_mapping[symbol]
+                for i, symbol in enumerate(symbols):
+                    symbol_id = symbol_mapping[symbol]
 
-                try:
-                    # Extract fresh data for this symbol
-                    data, status = self.extract_single_balance_sheet(symbol)
+                    try:
+                        # Extract data for this symbol
+                        data, status = self.extract_single_balance_sheet(symbol)
 
-                    if status == "pass" and data:
-                        # Keep only the latest periods for each report type
-                        filtered_data = {
-                            "symbol": data.get("symbol"),
-                        }
-
-                        # Keep latest annual reports
-                        if "annualReports" in data and data["annualReports"]:
-                            # Sort by fiscal date and take the latest periods_back
-                            annual_reports = sorted(
-                                data["annualReports"],
-                                key=lambda x: x.get("fiscalDateEnding", "1900-01-01"),
-                                reverse=True,
-                            )[:periods_back]
-                            filtered_data["annualReports"] = annual_reports
-                        else:
-                            filtered_data["annualReports"] = data.get(
-                                "annualReports", []
-                            )
-
-                        # Keep latest quarterly reports
-                        if "quarterlyReports" in data and data["quarterlyReports"]:
-                            # Sort by fiscal date and take the latest periods_back
-                            quarterly_reports = sorted(
-                                data["quarterlyReports"],
-                                key=lambda x: x.get("fiscalDateEnding", "1900-01-01"),
-                                reverse=True,
-                            )[:periods_back]
-                            filtered_data["quarterlyReports"] = quarterly_reports
-                        else:
-                            filtered_data["quarterlyReports"] = data.get(
-                                "quarterlyReports", []
-                            )
-
-                        # Transform filtered data
+                        # Transform data
                         records = self.transform_balance_sheet_data(
-                            symbol, symbol_id, filtered_data, status
+                            symbol, symbol_id, data, status
                         )
 
                         if records:
-                            # Delete existing records for this symbol before inserting fresh data
-                            with self.db_manager as db:
-                                delete_query = "DELETE FROM extracted.balance_sheet WHERE symbol_id = %s"
-                                db.execute_query(delete_query, (symbol_id,))
-
-                            # Load latest period records for this symbol
-                            self.load_balance_sheet_data(records)
+                            # Load records for this symbol using the same database connection
+                            self.load_balance_sheet_data(records, db)
                             total_records += len(records)
                             success_count += 1
                             print(
-                                f"✓ Updated {symbol} (ID: {symbol_id}) - {len(records)} latest records [{i+1}/{len(symbols)}]"
+                                f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]"
                             )
                         else:
                             fail_count += 1
                             print(
-                                f"✗ Updated {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]"
+                                f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]"
                             )
-                    else:
-                        # Handle failed extractions
-                        records = self.transform_balance_sheet_data(
-                            symbol, symbol_id, data, status
-                        )
-                        if records:
-                            # Delete and replace with error records
-                            with self.db_manager as db:
-                                delete_query = "DELETE FROM extracted.balance_sheet WHERE symbol_id = %s"
-                                db.execute_query(delete_query, (symbol_id,))
-                            self.load_balance_sheet_data(records)
-                            total_records += len(records)
+
+                    except Exception as e:
                         fail_count += 1
                         print(
-                            f"✗ Failed to get data for {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}]"
+                            f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]"
                         )
+                        # Continue processing other symbols even if one fails
+                        continue
 
-                except Exception as e:
-                    fail_count += 1
-                    print(
-                        f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]"
-                    )
-                    # Continue processing other symbols even if one fails
-                    continue
+                    # Rate limiting - wait between requests
+                    if i < len(symbols) - 1:
+                        time.sleep(self.rate_limit_delay)
 
-                # Rate limiting - wait between requests
-                if i < len(symbols) - 1:
-                    time.sleep(self.rate_limit_delay)
+                # Count remaining unprocessed symbols
+                base_query = """
+                    SELECT COUNT(DISTINCT ls.symbol_id)
+                    FROM listing_status ls
+                    LEFT JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
+                    WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
+                """
+                params = []
 
-            # Print summary
-            print("\n" + "=" * 50)
-            print("Balance Sheet LATEST PERIODS ETL Summary:")
-            print(f"  Exchange: {exchange_filter or 'All exchanges'}")
-            print(f"  Total symbols processed: {len(symbols)}")
-            print(f"  Successful updates: {success_count}")
-            print(f"  Failed updates: {fail_count}")
-            print(f"  Total records loaded: {total_records:,}")
-            print(
-                f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}"
-            )
-            print(f"  Periods kept per symbol: {periods_back}")
-            print("=" * 50)
+                if exchange_filter:
+                    if isinstance(exchange_filter, list):
+                        placeholders = ",".join(["%s" for _ in exchange_filter])
+                        base_query += f" AND ls.exchange IN ({placeholders})"
+                        params.extend(exchange_filter)
+                    else:
+                        base_query += " AND ls.exchange = %s"
+                        params.append(exchange_filter)
 
-            print("Balance Sheet LATEST PERIODS ETL process completed successfully!")
+                remaining_count = db.fetch_query(base_query, params)[0][0]
+
+                # Print summary
+                print("\n" + "=" * 50)
+                print("Incremental Balance Sheet ETL Summary:")
+                print(f"  Exchange: {exchange_filter or 'All exchanges'}")
+                print(f"  Total symbols processed: {len(symbols)}")
+                print(f"  Successful symbols: {success_count}")
+                print(f"  Failed symbols: {fail_count}")
+                print(f"  Remaining symbols: {remaining_count}")
+                print(f"  Total records loaded: {total_records:,}")
+                print(
+                    f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}"
+                )
+                print("=" * 50)
+
+                print("Incremental Balance Sheet ETL process completed successfully!")
 
         except Exception as e:
-            print(f"Balance Sheet LATEST PERIODS ETL process failed: {e}")
+            print(f"Incremental Balance Sheet ETL process failed: {e}")
             raise
 
 
@@ -929,29 +610,6 @@ def main():
 
     # Option 3: Large batch processing
     # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=1000)
-
-    # === QUARTERLY UPDATES ===
-    # Option 4: Update existing symbols with latest quarterly data (90+ days old)
-    # extractor.run_etl_update(exchange_filter='NASDAQ', limit=100, min_age_days=90)
-
-    # Option 5: Update all symbols regardless of age
-    # extractor.run_etl_update(exchange_filter='NASDAQ', limit=50, min_age_days=0)
-
-    # === LATEST PERIODS ONLY ===
-    # Option 6: Keep only latest 4 periods (1 year of quarters) - most efficient for recent data
-    # extractor.run_etl_latest_periods(exchange_filter='NASDAQ', limit=50, periods_back=4)
-
-    # Option 7: Keep only latest 8 periods (2 years of quarters)
-    # extractor.run_etl_latest_periods(exchange_filter='NASDAQ', limit=50, periods_back=8)
-
-    # === PRODUCTION SCHEDULE EXAMPLES ===
-    # For quarterly updates, uncomment one of these:
-
-    # Monthly refresh of NASDAQ symbols (catches new quarters)
-    # extractor.run_etl_update(exchange_filter='NASDAQ', min_age_days=30)
-
-    # Quarterly refresh keeping only recent data (storage efficient)
-    # extractor.run_etl_latest_periods(periods_back=4)
 
 
 if __name__ == "__main__":
