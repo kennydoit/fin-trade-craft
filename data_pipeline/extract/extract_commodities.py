@@ -77,6 +77,10 @@ class CommoditiesExtractor:
 
     def get_existing_data_dates_with_db(self, db, commodity_name, interval):
         """Get existing dates for a commodity to avoid duplicates using provided database connection."""
+        # If the table hasn't been created yet, there are no existing dates
+        if not db.table_exists("commodities", schema_name="extracted"):
+            return []
+
         query = """
             SELECT date
             FROM extracted.commodities
@@ -165,6 +169,10 @@ class CommoditiesExtractor:
         if df is None or df.empty:
             return 0
 
+        # Ensure the table exists before querying it
+        if not db.table_exists("commodities", schema_name="extracted"):
+            self.create_commodities_table_if_not_exists(db)
+
         # Get existing dates to avoid duplicates
         existing_dates = set(
             self.get_existing_data_dates_with_db(db, commodity_name, interval)
@@ -194,9 +202,6 @@ class CommoditiesExtractor:
             )
             records.append(record)
 
-        if not db.table_exists("extracted.commodities"):
-            self.create_commodities_table_if_not_exists(db)
-
         insert_query = """
             INSERT INTO extracted.commodities
             (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
@@ -213,7 +218,7 @@ class CommoditiesExtractor:
         self, db, commodity_name, function_name, interval, status, message
     ) -> None:
         """Record extraction status (empty/error/pass) in database using provided database connection."""
-        if not db.table_exists("extracted.commodities"):
+        if not db.table_exists("commodities", schema_name="extracted"):
             self.create_commodities_table_if_not_exists(db)
 
         # Check if status record already exists
