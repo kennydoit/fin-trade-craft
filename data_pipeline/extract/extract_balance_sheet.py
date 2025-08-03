@@ -5,9 +5,10 @@ Extract balance sheet data from Alpha Vantage API and load into database.
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
+import pandas as pd
 import requests
 from dotenv import load_dotenv
 
@@ -407,6 +408,270 @@ class BalanceSheetExtractor:
             # Create new connection (fallback)
             with self.db_manager as db:
                 self.load_balance_sheet_data(records, db)
+
+    def create_daily_table_if_not_exists(self, db):
+        """Create the balance_sheet_daily table if it doesn't exist."""
+        if not db.table_exists("balance_sheet_daily"):
+            create_table_sql = """
+                CREATE TABLE IF NOT EXISTS balance_sheet_daily (
+                    daily_balance_sheet_id            SERIAL PRIMARY KEY,
+                    symbol_id                         INTEGER NOT NULL,
+                    symbol                            VARCHAR(20) NOT NULL,
+                    date                              DATE NOT NULL,
+                    fiscal_date_ending                DATE,
+                    report_type                       VARCHAR(10) NOT NULL DEFAULT 'quarterly',
+                    reported_currency                 VARCHAR(10),
+                    total_assets                      BIGINT,
+                    total_current_assets              BIGINT,
+                    cash_and_cash_equivalents_at_carrying_value BIGINT,
+                    cash_and_short_term_investments   BIGINT,
+                    inventory                         BIGINT,
+                    current_net_receivables           BIGINT,
+                    total_non_current_assets          BIGINT,
+                    property_plant_equipment          BIGINT,
+                    accumulated_depreciation_amortization_ppe BIGINT,
+                    intangible_assets                 BIGINT,
+                    intangible_assets_excluding_goodwill BIGINT,
+                    goodwill                          BIGINT,
+                    investments                       BIGINT,
+                    long_term_investments             BIGINT,
+                    short_term_investments            BIGINT,
+                    other_current_assets              BIGINT,
+                    other_non_current_assets          BIGINT,
+                    total_liabilities                 BIGINT,
+                    total_current_liabilities         BIGINT,
+                    current_accounts_payable          BIGINT,
+                    deferred_revenue                  BIGINT,
+                    current_debt                      BIGINT,
+                    short_term_debt                   BIGINT,
+                    total_non_current_liabilities     BIGINT,
+                    capital_lease_obligations         BIGINT,
+                    long_term_debt                    BIGINT,
+                    current_long_term_debt            BIGINT,
+                    long_term_debt_noncurrent         BIGINT,
+                    short_long_term_debt_total        BIGINT,
+                    other_current_liabilities         BIGINT,
+                    other_non_current_liabilities     BIGINT,
+                    total_shareholder_equity          BIGINT,
+                    treasury_stock                    BIGINT,
+                    retained_earnings                 BIGINT,
+                    common_stock                      BIGINT,
+                    common_stock_shares_outstanding   BIGINT,
+                    is_forward_filled                 BOOLEAN DEFAULT FALSE,
+                    created_at                        TIMESTAMP DEFAULT NOW(),
+                    updated_at                        TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(symbol_id, date)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_balance_sheet_daily_symbol_id ON balance_sheet_daily(symbol_id);
+                CREATE INDEX IF NOT EXISTS idx_balance_sheet_daily_date ON balance_sheet_daily(date);
+                CREATE INDEX IF NOT EXISTS idx_balance_sheet_daily_forward_filled ON balance_sheet_daily(is_forward_filled);
+            """
+            db.execute_query(create_table_sql)
+            print("Created balance_sheet_daily table")
+
+    def load_balance_sheet_daily_data(self, records, db_connection=None):
+        """Load records into balance_sheet_daily table."""
+        if not records:
+            return 0
+
+        if db_connection:
+            db = db_connection
+
+            columns = list(records[0].keys())
+            placeholders = ", ".join(["%s" for _ in columns])
+            update_columns = [
+                f"{col} = EXCLUDED.{col}"
+                for col in columns
+                if col not in ["symbol_id", "date"]
+            ]
+            insert_query = f"""
+                INSERT INTO balance_sheet_daily ({', '.join(columns)})
+                VALUES ({placeholders})
+                ON CONFLICT (symbol_id, date) DO UPDATE SET
+                    {', '.join(update_columns)},
+                    updated_at = NOW()
+            """
+
+            record_tuples = [
+                tuple(record[col] for col in columns) for record in records
+            ]
+            rows = db.execute_many(insert_query, record_tuples)
+            return rows
+        else:
+            with self.db_manager as db:
+                return self.load_balance_sheet_daily_data(records, db)
+
+    def transform_to_daily_data(self, db, force_update=False):
+        """Transform quarterly balance sheet data to daily frequency."""
+        print("\nStarting daily transformation of balance sheet data...")
+        self.create_daily_table_if_not_exists(db)
+
+        query = """
+            SELECT symbol_id, symbol, fiscal_date_ending, report_type, reported_currency,
+                   total_assets, total_current_assets,
+                   cash_and_cash_equivalents_at_carrying_value,
+                   cash_and_short_term_investments, inventory, current_net_receivables,
+                   total_non_current_assets, property_plant_equipment,
+                   accumulated_depreciation_amortization_ppe, intangible_assets,
+                   intangible_assets_excluding_goodwill, goodwill, investments,
+                   long_term_investments, short_term_investments, other_current_assets,
+                   other_non_current_assets, total_liabilities, total_current_liabilities,
+                   current_accounts_payable, deferred_revenue, current_debt, short_term_debt,
+                   total_non_current_liabilities, capital_lease_obligations, long_term_debt,
+                   current_long_term_debt, long_term_debt_noncurrent, short_long_term_debt_total,
+                   other_current_liabilities, other_non_current_liabilities,
+                   total_shareholder_equity, treasury_stock, retained_earnings,
+                   common_stock, common_stock_shares_outstanding
+            FROM balance_sheet
+            WHERE api_response_status = 'pass' AND report_type = 'quarterly'
+            ORDER BY symbol_id, fiscal_date_ending
+        """
+
+        source_data = db.fetch_query(query)
+        if not source_data:
+            print("No source data found for transformation")
+            return 0
+
+        columns = [
+            "symbol_id",
+            "symbol",
+            "fiscal_date_ending",
+            "report_type",
+            "reported_currency",
+            "total_assets",
+            "total_current_assets",
+            "cash_and_cash_equivalents_at_carrying_value",
+            "cash_and_short_term_investments",
+            "inventory",
+            "current_net_receivables",
+            "total_non_current_assets",
+            "property_plant_equipment",
+            "accumulated_depreciation_amortization_ppe",
+            "intangible_assets",
+            "intangible_assets_excluding_goodwill",
+            "goodwill",
+            "investments",
+            "long_term_investments",
+            "short_term_investments",
+            "other_current_assets",
+            "other_non_current_assets",
+            "total_liabilities",
+            "total_current_liabilities",
+            "current_accounts_payable",
+            "deferred_revenue",
+            "current_debt",
+            "short_term_debt",
+            "total_non_current_liabilities",
+            "capital_lease_obligations",
+            "long_term_debt",
+            "current_long_term_debt",
+            "long_term_debt_noncurrent",
+            "short_long_term_debt_total",
+            "other_current_liabilities",
+            "other_non_current_liabilities",
+            "total_shareholder_equity",
+            "treasury_stock",
+            "retained_earnings",
+            "common_stock",
+            "common_stock_shares_outstanding",
+        ]
+
+        df = pd.DataFrame(source_data, columns=columns)
+        df["fiscal_date_ending"] = pd.to_datetime(df["fiscal_date_ending"])
+
+        numeric_cols = [
+            col
+            for col in columns
+            if col
+            not in [
+                "symbol_id",
+                "symbol",
+                "fiscal_date_ending",
+                "report_type",
+                "reported_currency",
+            ]
+        ]
+
+        total_inserted = 0
+
+        for (symbol_id, symbol), group in df.groupby(["symbol_id", "symbol"]):
+            group = group.sort_values("fiscal_date_ending")
+            start_date = group["fiscal_date_ending"].min().date()
+            end_date = date.today()
+            date_range = pd.date_range(start=start_date, end=end_date, freq="D")
+
+            group["original_fiscal_date"] = group["fiscal_date_ending"]
+            group = group.set_index("fiscal_date_ending").reindex(date_range).ffill()
+            group["fiscal_date_ending"] = group["original_fiscal_date"]
+            group = group.drop(columns=["original_fiscal_date"])
+            group.index.name = "date"
+            group.reset_index(inplace=True)
+            group["symbol_id"] = symbol_id
+            group["symbol"] = symbol
+            group["report_type"] = "quarterly"
+            group["is_forward_filled"] = (
+                group["date"].dt.date != group["fiscal_date_ending"].dt.date
+            )
+
+            for col in numeric_cols:
+                if col in group.columns:
+                    group[col] = group[col].astype("Int64")
+
+            records = []
+            for _, row in group.iterrows():
+                record = {
+                    "symbol_id": symbol_id,
+                    "symbol": symbol,
+                    "date": row["date"].date(),
+                    "fiscal_date_ending": row["fiscal_date_ending"].date()
+                    if pd.notna(row["fiscal_date_ending"])
+                    else None,
+                    "report_type": "quarterly",
+                    "reported_currency": row["reported_currency"],
+                    "is_forward_filled": bool(row["is_forward_filled"]),
+                }
+                for col in numeric_cols:
+                    record[col] = (
+                        int(row[col]) if pd.notna(row[col]) else None
+                    )
+                records.append(record)
+
+            if force_update:
+                db.execute_query(
+                    "DELETE FROM balance_sheet_daily WHERE symbol_id = %s",
+                    (symbol_id,),
+                )
+
+            inserted = self.load_balance_sheet_daily_data(records, db)
+            total_inserted += inserted
+            print(f"Processed {symbol}: inserted {inserted} daily records")
+
+        print(
+            f"Daily transformation completed: {total_inserted} total records inserted"
+        )
+        return total_inserted
+
+    def run_etl_with_daily_transform(
+        self,
+        exchange_filter=None,
+        limit=None,
+        force_update=False,
+        transform_to_daily=True,
+    ):
+        """Run ETL and optionally transform balance sheet data to daily."""
+        print("Starting balance sheet ETL with daily transformation...")
+        self.run_etl_incremental(exchange_filter=exchange_filter, limit=limit)
+
+        daily_inserted = 0
+        if transform_to_daily:
+            with self.db_manager as db:
+                daily_inserted = self.transform_to_daily_data(db, force_update)
+
+        print(
+            f"Daily transformation summary: {daily_inserted} records inserted into balance_sheet_daily"
+        )
+        return daily_inserted
 
     def run_etl_incremental(self, exchange_filter=None, limit=None):
         """Run ETL only for symbols not yet processed.
@@ -882,14 +1147,14 @@ def main():
 
     # === INITIAL DATA COLLECTION ===
     # Option 1: Initial balance sheet data collection (recommended for first run)
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=3500)
-    extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=8000)
+    # extractor.run_etl_with_daily_transform(exchange_filter='NYSE', limit=3500)
+    extractor.run_etl_with_daily_transform(exchange_filter="NASDAQ", limit=8000)
     #
     # Option 2: Process NYSE symbols
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
+    # extractor.run_etl_with_daily_transform(exchange_filter='NYSE', limit=10)
 
     # Option 3: Large batch processing
-    # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=1000)
+    # extractor.run_etl_with_daily_transform(exchange_filter='NASDAQ', limit=1000)
 
     # === QUARTERLY UPDATES ===
     # Option 4: Update existing symbols with latest quarterly data (90+ days old)
