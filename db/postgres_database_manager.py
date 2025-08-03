@@ -162,22 +162,41 @@ class PostgresDatabaseManager:
             cursor.close()
 
     def table_exists(self, table_name):
-        """Check if a table exists in the database."""
+        """Check if a table exists in the database.
+        
+        Args:
+            table_name: Table name (e.g., 'table_name') or schema-qualified (e.g., 'schema.table_name')
+        """
         if not self.connection:
             raise Exception("Database connection is not established.")
 
         cursor = self.connection.cursor()
         try:
-            cursor.execute(
-                """
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = %s
+            # Check if table name includes schema
+            if '.' in table_name:
+                schema_name, table_name_only = table_name.split('.', 1)
+                cursor.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = %s 
+                        AND table_name = %s
+                    )
+                """,
+                    (schema_name, table_name_only),
                 )
-            """,
-                (table_name,),
-            )
+            else:
+                # Default to public schema for unqualified table names
+                cursor.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables 
+                        WHERE table_schema = 'public' 
+                        AND table_name = %s
+                    )
+                """,
+                    (table_name,),
+                )
 
             return cursor.fetchone()[0]
 
