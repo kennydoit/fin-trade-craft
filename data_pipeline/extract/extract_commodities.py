@@ -5,7 +5,7 @@ Extract commodities data from Alpha Vantage API and load into database.
 import os
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -49,49 +49,42 @@ class CommoditiesExtractor:
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
 
+    def create_commodities_table_if_not_exists(self, db):
+        """Create the commodities table in the extracted schema if it doesn't exist."""
+        create_table_sql = """
+            CREATE SCHEMA IF NOT EXISTS extracted;
+
+            CREATE TABLE IF NOT EXISTS extracted.commodities (
+                commodity_id        SERIAL PRIMARY KEY,
+                commodity_name      VARCHAR(100) NOT NULL,
+                function_name       VARCHAR(50) NOT NULL,
+                date                DATE,
+                interval            VARCHAR(10) NOT NULL CHECK (interval IN ('daily','monthly')),
+                unit                VARCHAR(50),
+                value               NUMERIC(15,6),
+                name                VARCHAR(255),
+                api_response_status VARCHAR(20),
+                created_at          TIMESTAMP DEFAULT NOW(),
+                updated_at          TIMESTAMP DEFAULT NOW(),
+                UNIQUE(commodity_name, date, interval)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_commodities_name ON extracted.commodities(commodity_name);
+            CREATE INDEX IF NOT EXISTS idx_commodities_date ON extracted.commodities(date);
+        """
+        db.execute_query(create_table_sql)
+        print("Created extracted.commodities table with indexes")
+
     def get_existing_data_dates_with_db(self, db, commodity_name, interval):
         """Get existing dates for a commodity to avoid duplicates using provided database connection."""
         query = """
             SELECT date
-            FROM commodities
+            FROM extracted.commodities
             WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
             ORDER BY date DESC
         """
         result = db.fetch_query(query, (commodity_name, interval))
         return [row[0] for row in result] if result else []
-
-    def get_existing_data_dates(self, commodity_name, interval):
-        """Get existing dates for a commodity to avoid duplicates."""
-        with self.db_manager as db:
-            query = """
-                SELECT date
-                FROM commodities
-                WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
-                ORDER BY date DESC
-            """
-            result = db.fetch_query(query, (commodity_name, interval))
-            return [row[0] for row in result] if result else []
-
-    def get_last_update_date_with_db(self, db, commodity_name, interval):
-        """Get the most recent date for a commodity using provided database connection."""
-        query = """
-            SELECT MAX(date)
-            FROM commodities
-            WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
-        """
-        result = db.fetch_query(query, (commodity_name, interval))
-        return result[0][0] if result and result[0] and result[0][0] else None
-
-    def get_last_update_date(self, commodity_name, interval):
-        """Get the most recent date for a commodity."""
-        with self.db_manager as db:
-            query = """
-                SELECT MAX(date)
-                FROM commodities
-                WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
-            """
-            result = db.fetch_query(query, (commodity_name, interval))
-            return result[0][0] if result and result[0] and result[0][0] else None
 
     def extract_commodity_data(self, function_name):  # noqa: PLR0911
         """Extract data for a single commodity from Alpha Vantage API."""
@@ -201,19 +194,11 @@ class CommoditiesExtractor:
             )
             records.append(record)
 
-        # Initialize schema if tables don't exist
-        schema_path = (
-            Path(__file__).parent.parent.parent
-            / "db"
-            / "schema"
-            / "postgres_stock_db_schema.sql"
-        )
-        if not db.table_exists("commodities"):
-            print("Initializing database schema...")
-            db.initialize_schema(schema_path)
+        if not db.table_exists("extracted.commodities"):
+            self.create_commodities_table_if_not_exists(db)
 
         insert_query = """
-            INSERT INTO commodities
+            INSERT INTO extracted.commodities
             (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (commodity_name, date, interval) DO NOTHING
@@ -223,83 +208,19 @@ class CommoditiesExtractor:
         print(f"Inserted {inserted_count} new records for {commodity_name}")
         return inserted_count
 
-    def load_commodity_data(self, df, commodity_name, _function_name, interval):
-        """Load commodity data into the database."""
-        if df is None or df.empty:
-            return 0
-
-        # Get existing dates to avoid duplicates
-        existing_dates = set(self.get_existing_data_dates(commodity_name, interval))
-
-        # Filter out existing dates
-        if existing_dates:
-            df = df[~df["date"].isin(existing_dates)]
-            if df.empty:
-                print(
-                    f"All {len(existing_dates)} records for {commodity_name} already exist in database"
-                )
-                return 0
-
-        # Prepare data for insertion
-        records = []
-        for _, row in df.iterrows():
-            record = (
-                row["commodity_name"],
-                row["function_name"],
-                row["date"],
-                row["interval"],
-                row["unit"],
-                row["value"],
-                row["name"],
-                row["api_response_status"],
-            )
-            records.append(record)
-
-        # Insert data
-        with self.db_manager as db:
-            # Initialize schema if tables don't exist
-            schema_path = (
-                Path(__file__).parent.parent.parent
-                / "db"
-                / "schema"
-                / "postgres_stock_db_schema.sql"
-            )
-            if not db.table_exists("commodities"):
-                print("Initializing database schema...")
-                db.initialize_schema(schema_path)
-
-            insert_query = """
-                INSERT INTO commodities
-                (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (commodity_name, date, interval) DO NOTHING
-            """
-
-            inserted_count = db.execute_many(insert_query, records)
-
-        print(f"Inserted {inserted_count} new records for {commodity_name}")
-        return inserted_count
 
     def record_status_with_db(  # noqa: PLR0913
         self, db, commodity_name, function_name, interval, status, message
     ) -> None:
         """Record extraction status (empty/error/pass) in database using provided database connection."""
-        # Initialize schema if tables don't exist
-        schema_path = (
-            Path(__file__).parent.parent.parent
-            / "db"
-            / "schema"
-            / "postgres_stock_db_schema.sql"
-        )
-        if not db.table_exists("commodities"):
-            print("Initializing database schema...")
-            db.initialize_schema(schema_path)
+        if not db.table_exists("extracted.commodities"):
+            self.create_commodities_table_if_not_exists(db)
 
         # Check if status record already exists
         check_query = """
-            SELECT commodity_id FROM commodities
+            SELECT commodity_id FROM extracted.commodities
             WHERE commodity_name = %s AND function_name = %s AND interval = %s
-            AND api_response_status = %s AND date IS NULL
+              AND api_response_status = %s AND date IS NULL
         """
         existing = db.fetch_query(
             check_query, (commodity_name, function_name, interval, status)
@@ -309,9 +230,8 @@ class CommoditiesExtractor:
             print(f"Status record already exists for {commodity_name}: {status}")
             return
 
-        # Insert status record
         insert_query = """
-            INSERT INTO commodities
+            INSERT INTO extracted.commodities
             (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
             VALUES (%s, %s, NULL, %s, NULL, NULL, %s, %s)
         """
@@ -321,107 +241,31 @@ class CommoditiesExtractor:
         )
         print(f"Recorded {status} status for {commodity_name}")
 
-    def record_status(self, commodity_name, function_name, interval, status, message):
-        """Record extraction status (empty/error/pass) in database."""
-        with self.db_manager as db:
-            # Initialize schema if tables don't exist
-            schema_path = (
-                Path(__file__).parent.parent.parent
-                / "db"
-                / "schema"
-                / "postgres_stock_db_schema.sql"
-            )
-            if not db.table_exists("commodities"):
-                print("Initializing database schema...")
-                db.initialize_schema(schema_path)
-
-            # Check if status record already exists
-            check_query = """
-                SELECT commodity_id FROM commodities
-                WHERE commodity_name = %s AND function_name = %s AND interval = %s
-                AND api_response_status = %s AND date IS NULL
-            """
-            existing = db.fetch_query(
-                check_query, (commodity_name, function_name, interval, status)
-            )
-
-            if existing:
-                print(f"Status record already exists for {commodity_name}: {status}")
-                return
-
-            # Insert status record
-            insert_query = """
-                INSERT INTO commodities
-                (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
-                VALUES (%s, %s, NULL, %s, NULL, NULL, %s, %s)
-            """
-
-            db.execute_query(
-                insert_query, (commodity_name, function_name, interval, message, status)
-            )
-            print(f"Recorded {status} status for {commodity_name}")
-
-    def extract_and_load_commodity_with_db(self, db, function_name, force_update=False):
+    def extract_and_load_commodity_with_db(self, db, function_name):
         """Extract and load data for a single commodity using provided database connection."""
         interval, display_name = COMMODITY_CONFIGS[function_name]
-
-        # Check if we should skip (unless force_update)
-        if not force_update:
-            last_update = self.get_last_update_date_with_db(db, display_name, interval)
-            if last_update:
-                print(
-                    f"Data exists for {display_name} (last update: {last_update}). Use force_update=True to refresh."
-                )
-                return 0, "pass"
 
         # Extract data from API
         df, status, message = self.extract_commodity_data(function_name)
 
         if status == "data":
-            # Load data into database
             inserted_count = self.load_commodity_data_with_db(
                 db, df, display_name, function_name, interval
             )
             return inserted_count, status
-        # Record status (empty/error)
+
         self.record_status_with_db(
             db, display_name, function_name, interval, status, message
         )
         return 0, status
 
-    def extract_and_load_commodity(self, function_name, force_update=False):
-        """Extract and load data for a single commodity."""
-        interval, display_name = COMMODITY_CONFIGS[function_name]
-
-        # Check if we should skip (unless force_update)
-        if not force_update:
-            last_update = self.get_last_update_date(display_name, interval)
-            if last_update:
-                print(
-                    f"Data exists for {display_name} (last update: {last_update}). Use force_update=True to refresh."
-                )
-                return 0, "pass"
-
-        # Extract data from API
-        df, status, message = self.extract_commodity_data(function_name)
-
-        if status == "data":
-            # Load data into database
-            inserted_count = self.load_commodity_data(
-                df, display_name, function_name, interval
-            )
-            return inserted_count, status
-        # Record status (empty/error)
-        self.record_status(display_name, function_name, interval, status, message)
-        return 0, status
-
-    def run_etl_batch(self, commodity_list=None, batch_size=5, force_update=False):
+    def run_etl_batch(self, commodity_list=None, batch_size=5):
         """Run ETL for multiple commodities with batch processing and rate limiting."""
         if commodity_list is None:
             commodity_list = list(COMMODITY_CONFIGS.keys())
 
         print(f"Starting commodities ETL for {len(commodity_list)} commodities...")
-        print(f"Batch size: {batch_size}, Force update: {force_update}")
+        print(f"Batch size: {batch_size}")
         print("-" * 50)
 
         total_inserted = 0
@@ -439,7 +283,7 @@ class CommoditiesExtractor:
 
                 try:
                     inserted_count, status = self.extract_and_load_commodity_with_db(
-                        db, function_name, force_update
+                        db, function_name
                     )
                     total_inserted += inserted_count
                     status_summary[status] += 1
@@ -509,9 +353,7 @@ class CommoditiesExtractor:
             db.execute_query(create_table_sql)
             print("Created extracted.commodities_daily table")
 
-    def transform_to_daily_data(  # noqa: C901, PLR0912, PLR0915
-        self, db, force_update=False
-    ):
+    def transform_to_daily_data(self, db):  # noqa: C901, PLR0912, PLR0915
         """Transform all commodities data to daily frequency using forward filling."""
         print("\nStarting daily transformation of commodities...")
 
@@ -522,7 +364,7 @@ class CommoditiesExtractor:
         query = """
             SELECT commodity_name, function_name, date, interval as original_interval,
                    unit, value, name
-            FROM commodities
+            FROM extracted.commodities
             WHERE api_response_status = 'data' AND date IS NOT NULL
             ORDER BY commodity_name, function_name, date
         """
@@ -553,13 +395,6 @@ class CommoditiesExtractor:
             ["commodity_name", "function_name"]
         ):
             try:
-                if force_update:
-                    delete_query = """
-                        DELETE FROM extracted.commodities_daily
-                        WHERE commodity_name = %s AND function_name = %s
-                    """
-                    db.execute_query(delete_query, (commodity_name, function_name))
-
                 group_df = group.sort_values("date")
                 original_interval = group_df["original_interval"].iloc[0]
                 unit = group_df["unit"].iloc[0]
@@ -636,16 +471,7 @@ class CommoditiesExtractor:
                         (commodity_name, function_name, date, original_interval,
                          updated_interval, unit, value, name, is_forward_filled, original_date)
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (commodity_name, function_name, date)
-                        DO UPDATE SET
-                            original_interval = EXCLUDED.original_interval,
-                            updated_interval = EXCLUDED.updated_interval,
-                            unit = EXCLUDED.unit,
-                            value = EXCLUDED.value,
-                            name = EXCLUDED.name,
-                            is_forward_filled = EXCLUDED.is_forward_filled,
-                            original_date = EXCLUDED.original_date,
-                            updated_at = NOW()
+                        ON CONFLICT (commodity_name, function_name, date) DO NOTHING
                     """
                     inserted_count = db.execute_many(insert_query, records)
                     total_inserted += inserted_count
@@ -666,7 +492,6 @@ class CommoditiesExtractor:
         self,
         commodity_list=None,
         batch_size=5,
-        force_update=False,
         transform_to_daily=True,
     ):
         """Run ETL for commodities and optionally transform to daily data."""
@@ -675,11 +500,11 @@ class CommoditiesExtractor:
         daily_inserted = 0
         with self.db_manager as db:
             total_inserted, status_summary = self.run_etl_batch_with_db(
-                db, commodity_list, batch_size, force_update
+                db, commodity_list, batch_size
             )
 
             if transform_to_daily:
-                daily_inserted = self.transform_to_daily_data(db, force_update)
+                daily_inserted = self.transform_to_daily_data(db)
 
         print("\nTotal ETL Summary:")
         print(f"  Original data inserted: {total_inserted}")
@@ -691,14 +516,14 @@ class CommoditiesExtractor:
         return total_inserted, status_summary, daily_inserted
 
     def run_etl_batch_with_db(
-        self, db, commodity_list=None, batch_size=5, force_update=False
+        self, db, commodity_list=None, batch_size=5
     ):
         """Run ETL for multiple commodities using provided database connection."""
         if commodity_list is None:
             commodity_list = list(COMMODITY_CONFIGS.keys())
 
         print(f"Starting commodities ETL for {len(commodity_list)} commodities...")
-        print(f"Batch size: {batch_size}, Force update: {force_update}")
+        print(f"Batch size: {batch_size}")
         print("-" * 50)
 
         total_inserted = 0
@@ -714,7 +539,7 @@ class CommoditiesExtractor:
 
             try:
                 inserted_count, status = self.extract_and_load_commodity_with_db(
-                    db, function_name, force_update
+                    db, function_name
                 )
                 total_inserted += inserted_count
                 status_summary[status] += 1
@@ -750,51 +575,6 @@ class CommoditiesExtractor:
 
         return total_inserted, status_summary
 
-    def run_etl_update(self, commodity_list=None, batch_size=5):
-        """Run ETL update to refresh latest data for commodities."""
-        print("Running COMMODITIES UPDATE ETL...")
-        return self.run_etl_batch(commodity_list, batch_size, force_update=True)
-
-    def get_commodities_needing_update(self, days_threshold=1):
-        """Get list of commodities that need updates based on last update date."""
-
-        threshold_date = datetime.now().date() - timedelta(days=days_threshold)
-
-        with self.db_manager as db:
-            query = """
-                SELECT DISTINCT commodity_name, function_name, MAX(date) as last_date
-                FROM commodities
-                WHERE api_response_status = 'data'
-                GROUP BY commodity_name, function_name
-                HAVING last_date IS NULL OR last_date <= %s
-            """
-            result = db.fetch_query(query, (threshold_date,))
-
-            if result:
-                function_names = []
-                for row in result:
-                    # Find the function name for this commodity
-                    for func_name, (
-                        _interval,
-                        display_name,
-                    ) in COMMODITY_CONFIGS.items():
-                        if display_name == row[0]:
-                            function_names.append(func_name)
-                            break
-                return function_names
-            return []
-
-    def run_etl_latest_periods(self, days_threshold=1, batch_size=5):
-        """Run ETL for commodities needing updates based on last update date."""
-        commodity_functions = self.get_commodities_needing_update(days_threshold)
-
-        if not commodity_functions:
-            print(f"No commodities need updates (threshold: {days_threshold} days)")
-            return 0, {"pass": len(COMMODITY_CONFIGS)}
-
-        print(f"Found {len(commodity_functions)} commodities needing updates...")
-        return self.run_etl_update(commodity_functions, batch_size)
-
     def get_database_summary(self):
         """Get summary of commodities data in the database."""
         # Create a fresh database manager instance to avoid connection issues
@@ -804,7 +584,7 @@ class CommoditiesExtractor:
             # Total records by status
             status_query = """
                 SELECT api_response_status, COUNT(*) as count
-                FROM commodities
+                FROM extracted.commodities
                 GROUP BY api_response_status
                 ORDER BY api_response_status
             """
@@ -813,7 +593,7 @@ class CommoditiesExtractor:
             # Data records by commodity
             commodity_query = """
                 SELECT commodity_name, interval, COUNT(*) as count, MIN(date) as earliest, MAX(date) as latest
-                FROM commodities
+                FROM extracted.commodities
                 WHERE api_response_status = 'data'
                 GROUP BY commodity_name, interval
                 ORDER BY commodity_name, interval
@@ -823,10 +603,10 @@ class CommoditiesExtractor:
             # Latest values for each commodity
             latest_query = """
                 SELECT c1.commodity_name, c1.interval, c1.date, c1.value, c1.unit
-                FROM commodities c1
+                FROM extracted.commodities c1
                 INNER JOIN (
                     SELECT commodity_name, interval, MAX(date) as max_date
-                    FROM commodities
+                    FROM extracted.commodities
                     WHERE api_response_status = 'data'
                     GROUP BY commodity_name, interval
                 ) c2 ON c1.commodity_name = c2.commodity_name
@@ -879,41 +659,22 @@ def main():
     # === INITIAL DATA COLLECTION ===
     # Option 1: Test with a few commodities first (recommended for first run)
     # test_commodities = ['WTI', 'BRENT', 'NATURAL_GAS']
-    # extractor.run_etl_batch(test_commodities, batch_size=2, force_update=False)
+    # extractor.run_etl_batch(test_commodities, batch_size=2)
 
     # Option 2: Extract all oil and gas commodities
     # oil_gas_commodities = ['WTI', 'BRENT', 'NATURAL_GAS']
-    # extractor.run_etl_batch(oil_gas_commodities, batch_size=2, force_update=False)
+    # extractor.run_etl_batch(oil_gas_commodities, batch_size=2)
 
     # Option 3: Extract all metals commodities
     # metals_commodities = ['COPPER', 'ALUMINUM']
-    # extractor.run_etl_batch(metals_commodities, batch_size=2, force_update=False)
+    # extractor.run_etl_batch(metals_commodities, batch_size=2)
 
     # Option 4: Extract all agricultural commodities
     # agriculture_commodities = ['WHEAT', 'CORN', 'COTTON', 'SUGAR', 'COFFEE']
-    # extractor.run_etl_batch(agriculture_commodities, batch_size=3, force_update=False)
+    # extractor.run_etl_batch(agriculture_commodities, batch_size=3)
 
     # Option 5: Extract all commodities (full dataset) and transform to daily
-    extractor.run_etl_with_daily_transform(force_update=False)
-
-    # === DATA UPDATES ===
-    # Option 6: Update all commodities with fresh data (use sparingly due to API limits)
-    # extractor.run_etl_update(batch_size=3)
-
-    # Option 7: Update only commodities that are older than 7 days
-    # extractor.run_etl_latest_periods(days_threshold=7, batch_size=3)
-
-    # Option 8: Force update specific commodities
-    # priority_commodities = ['WTI', 'BRENT', 'NATURAL_GAS']
-    # extractor.run_etl_update(priority_commodities, batch_size=2)
-
-    # === PRODUCTION SCHEDULE EXAMPLES ===
-    # For daily updates of energy commodities (they update daily):
-    # energy_commodities = ['WTI', 'BRENT', 'NATURAL_GAS']
-    # extractor.run_etl_latest_periods(days_threshold=1, batch_size=2)
-
-    # For monthly updates of other commodities (they update monthly):
-    # monthly_commodities = ['COPPER', 'ALUMINUM', 'WHEAT', 'CORN', 'COTTON', 'SUGAR', 'COFFEE', 'ALL_COMMODITIES']
+    extractor.run_etl_with_daily_transform()
     # extractor.run_etl_latest_periods(days_threshold=30, batch_size=3)
 
     print("\nFinal Database Summary:")
