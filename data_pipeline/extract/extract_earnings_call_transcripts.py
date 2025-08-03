@@ -69,10 +69,10 @@ class EarningsCallTranscriptsExtractor:
     def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet with their IPO dates using provided database connection."""
         # First ensure the table exists, or create just the table
-        if not db.table_exists('earnings_call_transcripts'):
-            # Create just the earnings_call_transcripts table
+        if not db.table_exists('extracted.earnings_call_transcripts'):
+            # Create just the earnings_call_transcripts table in extracted schema
             create_table_sql = """
-                CREATE TABLE IF NOT EXISTS earnings_call_transcripts (
+                CREATE TABLE IF NOT EXISTS extracted.earnings_call_transcripts (
                     transcript_id       SERIAL PRIMARY KEY,
                     symbol_id           INTEGER NOT NULL,
                     symbol              VARCHAR(20) NOT NULL,
@@ -89,11 +89,11 @@ class EarningsCallTranscriptsExtractor:
                     UNIQUE(symbol_id, quarter, speaker, content_hash)
                 );
                 
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol_id ON earnings_call_transcripts(symbol_id);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol ON earnings_call_transcripts(symbol);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON earnings_call_transcripts(quarter);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON earnings_call_transcripts(speaker);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON earnings_call_transcripts(sentiment);
+                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol_id ON extracted.earnings_call_transcripts(symbol_id);
+                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol ON extracted.earnings_call_transcripts(symbol);
+                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON extracted.earnings_call_transcripts(quarter);
+                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON extracted.earnings_call_transcripts(speaker);
+                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON extracted.earnings_call_transcripts(sentiment);
             """
 
             # Create trigger separately if the update function exists
@@ -102,7 +102,7 @@ class EarningsCallTranscriptsExtractor:
                 BEGIN
                     IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_updated_at_column') THEN
                         CREATE TRIGGER update_earnings_call_transcripts_updated_at 
-                        BEFORE UPDATE ON earnings_call_transcripts 
+                        BEFORE UPDATE ON extracted.earnings_call_transcripts 
                         FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
                     END IF;
                 EXCEPTION WHEN others THEN
@@ -112,21 +112,21 @@ class EarningsCallTranscriptsExtractor:
 
             try:
                 db.execute_query(create_table_sql)
-                print("Created earnings_call_transcripts table")
+                print("Created extracted.earnings_call_transcripts table")
                 # Try to create trigger separately
                 try:
                     db.execute_query(trigger_sql)
-                    print("Created earnings_call_transcripts trigger")
+                    print("Created extracted.earnings_call_transcripts trigger")
                 except Exception as te:
                     print(f"Note: Could not create trigger (may already exist): {te}")
             except Exception as e:
-                print(f"Warning: Could not create earnings_call_transcripts table: {e}")
+                print(f"Warning: Could not create extracted.earnings_call_transcripts table: {e}")
 
         # Now query for unprocessed symbols with their IPO dates
         base_query = """
             SELECT ls.symbol_id, ls.symbol, ls.ipo_date
             FROM listing_status ls 
-            LEFT JOIN earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
+            LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
             WHERE ls.asset_type = 'Stock' AND ect.symbol_id IS NULL
         """
         params = []
@@ -155,7 +155,7 @@ class EarningsCallTranscriptsExtractor:
         base_query = """
             SELECT COUNT(DISTINCT ls.symbol_id)
             FROM listing_status ls 
-            LEFT JOIN earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
+            LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
             WHERE ls.asset_type = 'Stock' AND ect.symbol_id IS NULL
         """
         params = []
@@ -290,11 +290,11 @@ class EarningsCallTranscriptsExtractor:
         print(f"Loading {len(records)} records into database...")
 
         # The table should already exist from load_unprocessed_symbols_with_db
-        if not db_manager.table_exists('earnings_call_transcripts'):
-            print("Warning: earnings_call_transcripts table doesn't exist, creating it...")
-            # Create just the earnings_call_transcripts table
+        if not db_manager.table_exists('extracted.earnings_call_transcripts'):
+            print("Warning: extracted.earnings_call_transcripts table doesn't exist, creating it...")
+            # Create just the earnings_call_transcripts table in extracted schema
             create_table_sql = """
-                CREATE TABLE IF NOT EXISTS earnings_call_transcripts (
+                CREATE TABLE IF NOT EXISTS extracted.earnings_call_transcripts (
                     transcript_id       SERIAL PRIMARY KEY,
                     symbol_id           INTEGER NOT NULL,
                     symbol              VARCHAR(20) NOT NULL,
@@ -317,7 +317,7 @@ class EarningsCallTranscriptsExtractor:
         columns = list(records[0].keys())
         placeholders = ', '.join(['%s' for _ in columns])
         insert_query = f"""
-            INSERT INTO earnings_call_transcripts ({', '.join(columns)}) 
+            INSERT INTO extracted.earnings_call_transcripts ({', '.join(columns)}) 
             VALUES ({placeholders})
             ON CONFLICT (symbol_id, quarter, speaker, content_hash) 
             DO UPDATE SET
@@ -333,7 +333,7 @@ class EarningsCallTranscriptsExtractor:
 
         # Execute bulk insert
         rows_affected = db_manager.execute_many(insert_query, record_tuples)
-        print(f"Successfully loaded {rows_affected} records into earnings_call_transcripts table")
+        print(f"Successfully loaded {rows_affected} records into extracted.earnings_call_transcripts table")
 
     def run_etl_incremental(self, exchange_filter=None, limit=None, quarters_to_process=None):
         """Run ETL only for symbols not yet processed.
