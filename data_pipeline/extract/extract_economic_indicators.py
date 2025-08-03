@@ -192,6 +192,12 @@ class EconomicIndicatorsExtractor:
         if df is None or df.empty:
             return 0
 
+        # Ensure the destination table exists before querying it for existing
+        # records. Without this check, the first run of the ETL would attempt
+        # to select from a non-existent table and abort the transaction.
+        if not db.table_exists("economic_indicators", schema_name="extracted"):
+            self.create_economic_indicators_table_if_not_exists(db)
+
         existing_dates = set(
             self.get_existing_data_dates_with_db(
                 db, indicator_name, function_name, maturity, interval
@@ -221,7 +227,7 @@ class EconomicIndicatorsExtractor:
             )
             records.append(record)
 
-        if not db.table_exists("extracted.economic_indicators"):
+        if not db.table_exists("economic_indicators", schema_name="extracted"):
             self.create_economic_indicators_table_if_not_exists(db)
 
         insert_query = """
@@ -239,7 +245,7 @@ class EconomicIndicatorsExtractor:
         self, db, indicator_name, function_name, maturity, interval, status, message
     ):
         """Record extraction status (empty/error/pass) in database using provided database connection."""
-        if not db.table_exists("extracted.economic_indicators"):
+        if not db.table_exists("economic_indicators", schema_name="extracted"):
             self.create_economic_indicators_table_if_not_exists(db)
 
         check_query = """
