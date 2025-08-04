@@ -709,28 +709,6 @@ def main():
     # of its update interval (daily, monthly, or quarterly).
     extractor.run_etl_with_daily_transform()
 
-    # Example configurations for custom runs (uncomment as needed):
-    # gdp_indicators = ['REAL_GDP', 'REAL_GDP_PER_CAPITA']
-    # extractor.run_etl_with_daily_transform(gdp_indicators, batch_size=2)
-    # treasury_indicators = ['TREASURY_YIELD_3MONTH', 'TREASURY_YIELD_2YEAR', 'TREASURY_YIELD_5YEAR',
-    #                       'TREASURY_YIELD_7YEAR', 'TREASURY_YIELD_10YEAR', 'TREASURY_YIELD_30YEAR']
-    # extractor.run_etl_with_daily_transform(treasury_indicators, batch_size=3)
-    # labor_indicators = ['UNEMPLOYMENT', 'NONFARM_PAYROLL']
-    # extractor.run_etl_with_daily_transform(labor_indicators, batch_size=2)
-    # inflation_indicators = ['CPI', 'INFLATION']
-    # extractor.run_etl_with_daily_transform(inflation_indicators, batch_size=2)
-    # extractor.run_etl_batch()  # Original ETL without daily transformation
-    # extractor.run_etl_with_daily_transform(batch_size=3)  # Update all with daily transform
-    # with extractor.db_manager as db:
-    #     extractor.transform_to_daily_data(db)  # Transform existing data only
-    # daily_indicators = ['TREASURY_YIELD_10YEAR', 'TREASURY_YIELD_3MONTH', 'TREASURY_YIELD_2YEAR',
-    #                    'TREASURY_YIELD_5YEAR', 'TREASURY_YIELD_7YEAR', 'TREASURY_YIELD_30YEAR', 'FEDERAL_FUNDS_RATE']
-    # extractor.run_etl_with_daily_transform(daily_indicators, batch_size=3)
-    # monthly_indicators = ['CPI', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL']
-    # extractor.run_etl_with_daily_transform(monthly_indicators, batch_size=3)
-    # quarterly_indicators = ['REAL_GDP', 'REAL_GDP_PER_CAPITA']
-    # extractor.run_etl_with_daily_transform(quarterly_indicators, batch_size=2)
-
     print("\nFinal Database Summary:")
     # Small delay to ensure previous connection is fully closed
     time.sleep(0.1)
