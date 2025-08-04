@@ -29,6 +29,20 @@
 
 <br>
 
+# Alpha Vantage API
+
+| Frequency | Source | Size |
+|-----------|----------------------------|------|
+| Quarterly | cash flow | M |
+| Quarterly | income statement | M |
+| Quarterly | balance sheet | M |
+| Quarterly | earnings call transcripts | L |
+| Varied | insider transactions | S |
+| Varied | news stories | L |
+| Daily | commodities | S |
+| Daily | economic indicators | S |
+| Daily | OHLCV | L |
+
 # Directory Structure
 
 ```graphql
