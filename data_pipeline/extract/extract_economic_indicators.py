@@ -704,56 +704,30 @@ def main():
 
     extractor = EconomicIndicatorsExtractor()
 
-    # Configuration options for different use cases:
+    # Run extraction for all indicators using the master list defined in
+    # ECONOMIC_INDICATOR_CONFIGS.  This pulls every available indicator regardless
+    # of its update interval (daily, monthly, or quarterly).
+    extractor.run_etl_with_daily_transform()
 
-    # === INITIAL DATA COLLECTION ===
-    # Option 1: Test with a few indicators first (recommended for first run)
-    test_indicators = ['REAL_GDP', 'FEDERAL_FUNDS_RATE', 'UNEMPLOYMENT']
-    extractor.run_etl_with_daily_transform(test_indicators, batch_size=2)
-
-    # Option 2: Extract GDP and related indicators with daily transformation
+    # Example configurations for custom runs (uncomment as needed):
     # gdp_indicators = ['REAL_GDP', 'REAL_GDP_PER_CAPITA']
     # extractor.run_etl_with_daily_transform(gdp_indicators, batch_size=2)
-
-    # Option 3: Extract Treasury yields (all maturities) with daily transformation
     # treasury_indicators = ['TREASURY_YIELD_3MONTH', 'TREASURY_YIELD_2YEAR', 'TREASURY_YIELD_5YEAR',
     #                       'TREASURY_YIELD_7YEAR', 'TREASURY_YIELD_10YEAR', 'TREASURY_YIELD_30YEAR']
     # extractor.run_etl_with_daily_transform(treasury_indicators, batch_size=3)
-
-    # Option 4: Extract labor market indicators with daily transformation
     # labor_indicators = ['UNEMPLOYMENT', 'NONFARM_PAYROLL']
     # extractor.run_etl_with_daily_transform(labor_indicators, batch_size=2)
-
-    # Option 5: Extract inflation and price indicators with daily transformation
     # inflation_indicators = ['CPI', 'INFLATION']
     # extractor.run_etl_with_daily_transform(inflation_indicators, batch_size=2)
-
-    # Option 6: Extract all economic indicators (full dataset) with daily transformation
-    # extractor.run_etl_with_daily_transform()  # Uses all indicators by default
-
-    # === ORIGINAL ETL WITHOUT DAILY TRANSFORMATION ===
-    # Option 7: Run original ETL without daily transformation (maintains backward compatibility)
-    # extractor.run_etl_batch()
-
-    # === DATA UPDATES WITH DAILY TRANSFORMATION ===
-    # Option 8: Update all indicators with fresh data and transform to daily (use sparingly due to API limits)
-    # extractor.run_etl_with_daily_transform(batch_size=3)
-
-    # Option 9: Transform existing data to daily without re-extracting from API
+    # extractor.run_etl_batch()  # Original ETL without daily transformation
+    # extractor.run_etl_with_daily_transform(batch_size=3)  # Update all with daily transform
     # with extractor.db_manager as db:
-    #     extractor.transform_to_daily_data(db)
-
-    # === PRODUCTION SCHEDULE EXAMPLES ===
-    # For daily updates of daily indicators with daily transformation:
+    #     extractor.transform_to_daily_data(db)  # Transform existing data only
     # daily_indicators = ['TREASURY_YIELD_10YEAR', 'TREASURY_YIELD_3MONTH', 'TREASURY_YIELD_2YEAR',
     #                    'TREASURY_YIELD_5YEAR', 'TREASURY_YIELD_7YEAR', 'TREASURY_YIELD_30YEAR', 'FEDERAL_FUNDS_RATE']
     # extractor.run_etl_with_daily_transform(daily_indicators, batch_size=3)
-
-    # For monthly updates with daily transformation:
     # monthly_indicators = ['CPI', 'INFLATION', 'RETAIL_SALES', 'DURABLES', 'UNEMPLOYMENT', 'NONFARM_PAYROLL']
     # extractor.run_etl_with_daily_transform(monthly_indicators, batch_size=3)
-
-    # For quarterly updates with daily transformation:
     # quarterly_indicators = ['REAL_GDP', 'REAL_GDP_PER_CAPITA']
     # extractor.run_etl_with_daily_transform(quarterly_indicators, batch_size=2)
 
