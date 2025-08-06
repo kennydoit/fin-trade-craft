@@ -29,11 +29,16 @@ class IncomeStatementExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
 
-        self.db_manager = PostgresDatabaseManager()
+        # Don't create db_manager in init - create fresh for each operation
         self.base_url = "https://www.alphavantage.co/query"
 
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
+    
+    @property
+    def db_manager(self):
+        """Create a fresh database manager instance for each use."""
+        return PostgresDatabaseManager()
 
     def load_valid_symbols(self, exchange_filter=None, limit=None):
         """Load valid stock symbols from the database with their symbol_ids."""
@@ -60,8 +65,8 @@ class IncomeStatementExtractor:
     def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet (not in income_statement table)."""
         with self.db_manager as db:
-            if not db.table_exists("extracted.income_statement"):
-                self.create_income_statement_table(db)
+            # First ensure the table exists - create if needed (idempotent operation)
+            self.create_income_statement_table(db)
 
             base_query = """
                 SELECT ls.symbol_id, ls.symbol
@@ -312,50 +317,54 @@ class IncomeStatementExtractor:
 
     def create_income_statement_table(self, db):
         """Create the income_statement table if it doesn't exist."""
-        create_table_sql = """
-            CREATE SCHEMA IF NOT EXISTS extracted;
+        try:
+            create_table_sql = """
+                CREATE SCHEMA IF NOT EXISTS extracted;
 
-            CREATE TABLE IF NOT EXISTS extracted.income_statement (
-                symbol_id                               INTEGER NOT NULL,
-                symbol                                  VARCHAR(20) NOT NULL,
-                fiscal_date_ending                      DATE,
-                report_type                             VARCHAR(10) NOT NULL CHECK (report_type IN ('annual', 'quarterly')),
-                reported_currency                       VARCHAR(10),
-                gross_profit                            BIGINT,
-                total_revenue                           BIGINT,
-                cost_of_revenue                         BIGINT,
-                cost_of_goods_and_services_sold         BIGINT,
-                operating_income                        BIGINT,
-                selling_general_and_administrative      BIGINT,
-                research_and_development                BIGINT,
-                operating_expenses                      BIGINT,
-                investment_income_net                   BIGINT,
-                net_interest_income                     BIGINT,
-                interest_income                         BIGINT,
-                interest_expense                        BIGINT,
-                non_interest_income                     BIGINT,
-                other_non_operating_income              BIGINT,
-                depreciation                            BIGINT,
-                depreciation_and_amortization           BIGINT,
-                income_before_tax                       BIGINT,
-                income_tax_expense                      BIGINT,
-                interest_and_debt_expense               BIGINT,
-                net_income_from_continuing_operations   BIGINT,
-                comprehensive_income_net_of_tax         BIGINT,
-                ebit                                    BIGINT,
-                ebitda                                  BIGINT,
-                net_income                              BIGINT,
-                api_response_status                     VARCHAR(20),
-                created_at                              TIMESTAMP DEFAULT NOW(),
-                updated_at                              TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE
-            );
+                CREATE TABLE IF NOT EXISTS extracted.income_statement (
+                    symbol_id                               INTEGER NOT NULL,
+                    symbol                                  VARCHAR(20) NOT NULL,
+                    fiscal_date_ending                      DATE,
+                    report_type                             VARCHAR(10) NOT NULL CHECK (report_type IN ('annual', 'quarterly')),
+                    reported_currency                       VARCHAR(10),
+                    gross_profit                            BIGINT,
+                    total_revenue                           BIGINT,
+                    cost_of_revenue                         BIGINT,
+                    cost_of_goods_and_services_sold         BIGINT,
+                    operating_income                        BIGINT,
+                    selling_general_and_administrative      BIGINT,
+                    research_and_development                BIGINT,
+                    operating_expenses                      BIGINT,
+                    investment_income_net                   BIGINT,
+                    net_interest_income                     BIGINT,
+                    interest_income                         BIGINT,
+                    interest_expense                        BIGINT,
+                    non_interest_income                     BIGINT,
+                    other_non_operating_income              BIGINT,
+                    depreciation                            BIGINT,
+                    depreciation_and_amortization           BIGINT,
+                    income_before_tax                       BIGINT,
+                    income_tax_expense                      BIGINT,
+                    interest_and_debt_expense               BIGINT,
+                    net_income_from_continuing_operations   BIGINT,
+                    comprehensive_income_net_of_tax         BIGINT,
+                    ebit                                    BIGINT,
+                    ebitda                                  BIGINT,
+                    net_income                              BIGINT,
+                    api_response_status                     VARCHAR(20),
+                    created_at                              TIMESTAMP DEFAULT NOW(),
+                    updated_at                              TIMESTAMP DEFAULT NOW(),
+                    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE
+                );
 
-            CREATE INDEX IF NOT EXISTS idx_income_statement_symbol_id ON extracted.income_statement(symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_income_statement_fiscal_date ON extracted.income_statement(fiscal_date_ending);
-        """
-        db.execute_query(create_table_sql)
-        print("Created extracted.income_statement table with indexes")
+                CREATE INDEX IF NOT EXISTS idx_income_statement_symbol_id ON extracted.income_statement(symbol_id);
+                CREATE INDEX IF NOT EXISTS idx_income_statement_fiscal_date ON extracted.income_statement(fiscal_date_ending);
+            """
+            db.execute_query(create_table_sql)
+            print("Created extracted.income_statement table with indexes")
+        except Exception as e:
+            print(f"Warning: Table creation failed, but continuing: {e}")
+            # Continue anyway - table might already exist
 
     def load_income_statement_data(self, records, db_connection=None):
         """Load income statement records into the database."""
@@ -404,9 +413,8 @@ class IncomeStatementExtractor:
 
         try:
             with self.db_manager as db:
-                # Ensure the table exists first
-                if not db.table_exists("extracted.income_statement"):
-                    self.create_income_statement_table(db)
+                # Ensure the table exists first - create if needed (idempotent operation)
+                self.create_income_statement_table(db)
 
                 # Load only unprocessed symbols
                 base_query = """
@@ -534,14 +542,15 @@ def main():
 
     # === INITIAL DATA COLLECTION ===
     # Option 1: Initial income statement data collection (recommended for first run)
-    extractor.run_etl_incremental(exchange_filter='NYSE', limit=3000)
-    # extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=2)  # Small test
-
-    # Option 2: Process NYSE symbols
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
-
-    # Option 3: Large batch processing
-    # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=1000)
+    try:
+        extractor.run_etl_incremental(exchange_filter='NYSE', limit=10000)
+        print("\n" + "="*60)
+        print("NYSE processing completed. Starting NASDAQ processing...")
+        print("="*60 + "\n")
+        extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=10000)
+    except Exception as e:
+        print(f"Error in main execution: {e}")
+        raise
 
 
 if __name__ == "__main__":

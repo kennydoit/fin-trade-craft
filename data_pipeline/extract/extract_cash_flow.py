@@ -29,11 +29,16 @@ class CashFlowExtractor:
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
 
-        self.db_manager = PostgresDatabaseManager()
+        # Don't create db_manager in init - create fresh for each operation
         self.base_url = "https://www.alphavantage.co/query"
 
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
+    
+    @property
+    def db_manager(self):
+        """Create a fresh database manager instance for each use."""
+        return PostgresDatabaseManager()
 
     def load_valid_symbols(self, exchange_filter=None, limit=None):
         """Load valid stock symbols from the database with their symbol_ids."""
@@ -60,10 +65,8 @@ class CashFlowExtractor:
     def load_unprocessed_symbols(self, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet (not in cash_flow table)."""
         with self.db_manager as db:
-            # First ensure the table exists, or create just the cash_flow table
-            if not db.table_exists("extracted.cash_flow"):
-                # Create just the cash_flow table in extracted schema
-                self.create_cash_flow_table(db)
+            # First ensure the table exists - create if needed (idempotent operation)
+            self.create_cash_flow_table(db)
 
             # Now we can safely query with LEFT JOIN
             base_query = """
@@ -349,52 +352,56 @@ class CashFlowExtractor:
 
     def create_cash_flow_table(self, db):
         """Create the cash_flow table if it doesn't exist."""
-        create_table_sql = """
-            CREATE TABLE IF NOT EXISTS extracted.cash_flow (
-                symbol_id                               INTEGER NOT NULL,
-                symbol                                  VARCHAR(20) NOT NULL,
-                fiscal_date_ending                      DATE,  -- Allow NULL for empty/error records
-                report_type                             VARCHAR(10) NOT NULL CHECK (report_type IN ('annual', 'quarterly')),
-                reported_currency                       VARCHAR(10),
-                operating_cashflow                      BIGINT,
-                payments_for_operating_activities       BIGINT,
-                proceeds_from_operating_activities      BIGINT,
-                change_in_operating_liabilities         BIGINT,
-                change_in_operating_assets              BIGINT,
-                depreciation_depletion_and_amortization BIGINT,
-                capital_expenditures                    BIGINT,
-                change_in_receivables                   BIGINT,
-                change_in_inventory                     BIGINT,
-                profit_loss                             BIGINT,
-                cashflow_from_investment                BIGINT,
-                cashflow_from_financing                 BIGINT,
-                proceeds_from_repayments_of_short_term_debt BIGINT,
-                payments_for_repurchase_of_common_stock BIGINT,
-                payments_for_repurchase_of_equity       BIGINT,
-                payments_for_repurchase_of_preferred_stock BIGINT,
-                dividend_payout                         BIGINT,
-                dividend_payout_common_stock            BIGINT,
-                dividend_payout_preferred_stock         BIGINT,
-                proceeds_from_issuance_of_common_stock  BIGINT,
-                proceeds_from_issuance_of_long_term_debt_and_capital_securities_net BIGINT,
-                proceeds_from_issuance_of_preferred_stock BIGINT,
-                proceeds_from_repurchase_of_equity      BIGINT,
-                proceeds_from_sale_of_treasury_stock    BIGINT,
-                change_in_cash_and_cash_equivalents     BIGINT,
-                change_in_exchange_rate                 BIGINT,
-                net_income                              BIGINT,
-                api_response_status                     VARCHAR(20),
-                created_at                              TIMESTAMP DEFAULT NOW(),
-                updated_at                              TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE
-            );
+        try:
+            create_table_sql = """
+                CREATE TABLE IF NOT EXISTS extracted.cash_flow (
+                    symbol_id                               INTEGER NOT NULL,
+                    symbol                                  VARCHAR(20) NOT NULL,
+                    fiscal_date_ending                      DATE,  -- Allow NULL for empty/error records
+                    report_type                             VARCHAR(10) NOT NULL CHECK (report_type IN ('annual', 'quarterly')),
+                    reported_currency                       VARCHAR(10),
+                    operating_cashflow                      BIGINT,
+                    payments_for_operating_activities       BIGINT,
+                    proceeds_from_operating_activities      BIGINT,
+                    change_in_operating_liabilities         BIGINT,
+                    change_in_operating_assets              BIGINT,
+                    depreciation_depletion_and_amortization BIGINT,
+                    capital_expenditures                    BIGINT,
+                    change_in_receivables                   BIGINT,
+                    change_in_inventory                     BIGINT,
+                    profit_loss                             BIGINT,
+                    cashflow_from_investment                BIGINT,
+                    cashflow_from_financing                 BIGINT,
+                    proceeds_from_repayments_of_short_term_debt BIGINT,
+                    payments_for_repurchase_of_common_stock BIGINT,
+                    payments_for_repurchase_of_equity       BIGINT,
+                    payments_for_repurchase_of_preferred_stock BIGINT,
+                    dividend_payout                         BIGINT,
+                    dividend_payout_common_stock            BIGINT,
+                    dividend_payout_preferred_stock         BIGINT,
+                    proceeds_from_issuance_of_common_stock  BIGINT,
+                    proceeds_from_issuance_of_long_term_debt_and_capital_securities_net BIGINT,
+                    proceeds_from_issuance_of_preferred_stock BIGINT,
+                    proceeds_from_repurchase_of_equity      BIGINT,
+                    proceeds_from_sale_of_treasury_stock    BIGINT,
+                    change_in_cash_and_cash_equivalents     BIGINT,
+                    change_in_exchange_rate                 BIGINT,
+                    net_income                              BIGINT,
+                    api_response_status                     VARCHAR(20),
+                    created_at                              TIMESTAMP DEFAULT NOW(),
+                    updated_at                              TIMESTAMP DEFAULT NOW(),
+                    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE
+                );
 
-            -- Create indexes for cash flow
-            CREATE INDEX IF NOT EXISTS idx_cash_flow_symbol_id ON extracted.cash_flow(symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_cash_flow_fiscal_date ON extracted.cash_flow(fiscal_date_ending);
-        """
-        db.execute_query(create_table_sql)
-        print("Created extracted.cash_flow table with indexes")
+                -- Create indexes for cash flow
+                CREATE INDEX IF NOT EXISTS idx_cash_flow_symbol_id ON extracted.cash_flow(symbol_id);
+                CREATE INDEX IF NOT EXISTS idx_cash_flow_fiscal_date ON extracted.cash_flow(fiscal_date_ending);
+            """
+            db.execute_query(create_table_sql)
+            print("Created extracted.cash_flow table with indexes")
+        except Exception as e:
+            print(f"Warning: Table creation failed, but continuing: {e}")
+            # Continue anyway - table might already exist
 
     def load_cash_flow_data(self, records, db_connection=None):
         """Load cash flow records into the database."""
@@ -444,10 +451,8 @@ class CashFlowExtractor:
         try:
             # Use a single database connection throughout the entire process
             with self.db_manager as db:
-                # Ensure the table exists first
-                if not db.table_exists("extracted.cash_flow"):
-                    # Create just the cash_flow table in extracted schema
-                    self.create_cash_flow_table(db)
+                # Ensure the table exists first - create if needed (idempotent operation)
+                self.create_cash_flow_table(db)
 
                 # Load only unprocessed symbols
                 base_query = """
@@ -574,15 +579,15 @@ def main():
 
     # === INITIAL DATA COLLECTION ===
     # Option 1: Initial cash flow data collection (recommended for first run)
-    extractor.run_etl_incremental(exchange_filter='NYSE', limit=3000)
-    # extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=2)  # Small test
-
-    # Option 2: Process NYSE symbols
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
-
-    # Option 3: Large batch processing
-    # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=1000)
-
+    try:
+        extractor.run_etl_incremental(exchange_filter='NYSE', limit=10000)
+        print("\n" + "="*60)
+        print("NYSE processing completed. Starting NASDAQ processing...")
+        print("="*60 + "\n")
+        extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=10000)
+    except Exception as e:
+        print(f"Error in main execution: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
