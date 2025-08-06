@@ -603,13 +603,10 @@ def main():
 
     # === INITIAL DATA COLLECTION ===
     # Option 1: Initial balance sheet data collection (recommended for first run)
-    extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=50)
-    #
-    # Option 2: Process NYSE symbols
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=10)
+    # extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=10000)
+    extractor.run_etl_incremental(exchange_filter="NYSE", limit=10000)
 
-    # Option 3: Large batch processing
-    # extractor.run_etl_incremental(exchange_filter='NASDAQ', limit=1000)
+
 
 
 if __name__ == "__main__":

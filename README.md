@@ -33,15 +33,15 @@
 
 | Frequency | Source | Size |
 |-----------|----------------------------|------|
-| Quarterly | cash flow | M |
-| Quarterly | income statement | M |
-| Quarterly | balance sheet | M |
-| Quarterly | earnings call transcripts | L |
-| Varied | insider transactions | S |
-| Varied | news stories | L |
-| Daily | commodities | S |
-| Daily | economic indicators | S |
-| Daily | OHLCV | L |
+| Quarterly | cash flow | ** |
+| Quarterly | income statement | ** |
+| Quarterly | balance sheet | ** |
+| Quarterly | earnings call transcripts | *** |
+| Varied | insider transactions | *** |
+| Varied | news stories | *** |
+| Daily | commodities | * |
+| Daily | economic indicators | * |
+| Daily | OHLCV | *** |
 
 # Directory Structure
 
