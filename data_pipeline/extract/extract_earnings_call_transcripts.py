@@ -6,7 +6,7 @@ import hashlib
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 
 import requests
@@ -35,14 +35,23 @@ class EarningsCallTranscriptsExtractor:
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
 
-        # Quarters to process - comprehensive list back to 2010Q1
+        # Precompute quarters from current quarter back to 2010Q1
         self.quarters = []
-        # Generate all quarters from 2024Q3 back to 2010Q1
-        for year in range(2024, 2009, -1):  # 2024 down to 2010
-            for quarter in [3, 2, 1] if year == 2024 else [4, 3, 2, 1]:
+        current = datetime.now()
+        current_year = current.year
+        current_quarter = (current.month - 1) // 3 + 1
+        for year in range(current_year, 2009, -1):
+            if year == current_year:
+                quarters_range = range(current_quarter, 0, -1)
+            else:
+                quarters_range = range(4, 0, -1)
+            for quarter in quarters_range:
                 self.quarters.append(f"{year}Q{quarter}")
 
-        print(f"Initialized with {len(self.quarters)} quarters from {self.quarters[0]} to {self.quarters[-1]}")
+        if self.quarters:
+            print(
+                f"Initialized with {len(self.quarters)} quarters from {self.quarters[0]} to {self.quarters[-1]}"
+            )
 
     def load_valid_symbols(self, exchange_filter=None, limit=None):
         """Load valid stock symbols from the database with their symbol_ids."""
@@ -67,7 +76,7 @@ class EarningsCallTranscriptsExtractor:
             return {row[1]: row[0] for row in result}
 
     def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
-        """Load symbols that haven't been processed yet with their IPO dates using provided database connection."""
+        """Load unprocessed symbols with IPO and listing status information."""
         # First ensure the table exists, or create just the table
         if not db.table_exists('extracted.earnings_call_transcripts'):
             # Create just the earnings_call_transcripts table in extracted schema
@@ -122,11 +131,11 @@ class EarningsCallTranscriptsExtractor:
             except Exception as e:
                 print(f"Warning: Could not create extracted.earnings_call_transcripts table: {e}")
 
-        # Now query for unprocessed symbols with their IPO dates
+        # Now query for unprocessed symbols with their IPO dates and status info
         base_query = """
-            SELECT ls.symbol_id, ls.symbol, ls.ipo_date
-            FROM listing_status ls 
-            LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
+            SELECT ls.symbol_id, ls.symbol, ls.ipo_date, ls.status, ls.delisting_date
+            FROM listing_status ls
+            LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id
             WHERE ls.asset_type = 'Stock' AND ect.symbol_id IS NULL
         """
         params = []
@@ -140,15 +149,15 @@ class EarningsCallTranscriptsExtractor:
                 base_query += " AND ls.exchange = %s"
                 params.append(exchange_filter)
 
-        base_query += " GROUP BY ls.symbol_id, ls.symbol, ls.ipo_date"
+        base_query += " GROUP BY ls.symbol_id, ls.symbol, ls.ipo_date, ls.status, ls.delisting_date"
 
         if limit:
             base_query += " LIMIT %s"
             params.append(limit)
 
         result = db.fetch_query(base_query, params)
-        # Return dictionary with symbol as key and tuple of (symbol_id, ipo_date) as value
-        return {row[1]: (row[0], row[2]) for row in result}
+        # Return dictionary with symbol as key and tuple of (symbol_id, ipo_date, status, delisting_date)
+        return {row[1]: (row[0], row[2], row[3], row[4]) for row in result}
 
     def get_remaining_symbols_count_with_db(self, db, exchange_filter=None):
         """Get count of remaining unprocessed symbols using provided database connection."""
@@ -356,7 +365,7 @@ class EarningsCallTranscriptsExtractor:
             # Use a fresh database manager for this ETL run
             db_manager = PostgresDatabaseManager()
             with db_manager as db:
-                # Load only unprocessed symbols with their IPO dates using the shared connection
+                # Load unprocessed symbols with IPO and status information
                 symbol_mapping = self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
                 symbols = list(symbol_mapping.keys())
                 print(f"Found {len(symbols)} unprocessed symbols")
@@ -372,48 +381,74 @@ class EarningsCallTranscriptsExtractor:
                 call_count = 0
 
                 for i, symbol in enumerate(symbols):
-                    symbol_id, ipo_date = symbol_mapping[symbol]
+                    symbol_id, ipo_date, status, delisting_date = symbol_mapping[symbol]
                     symbol_records = []
 
-                    print(f"\n--- Processing symbol {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}] ---")
+                    print(
+                        f"\n--- Processing symbol {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}] ---"
+                    )
 
                     # Determine quarters to process for this symbol
                     if use_ipo_based_quarters:
-                        symbol_quarters = self.get_quarters_for_symbol(ipo_date)
+                        symbol_quarters = self.get_quarters_for_symbol(
+                            ipo_date, delisting_date
+                        )
                     else:
                         symbol_quarters = quarters_to_process
 
                     total_calls += len(symbol_quarters)
+                    consecutive_no_data = 0
 
-                    # Process all quarters for this symbol
+                    # Process quarters for this symbol from most recent backwards
                     for quarter in symbol_quarters:
                         call_count += 1
 
                         try:
-                            # Extract data for this symbol and quarter
-                            data, status = self.extract_single_earnings_call_transcript(symbol, quarter)
+                            data, status_code = self.extract_single_earnings_call_transcript(
+                                symbol, quarter
+                            )
 
-                            # Transform data
-                            records = self.transform_earnings_call_transcript_data(symbol, symbol_id, quarter, data, status)
+                            records = self.transform_earnings_call_transcript_data(
+                                symbol, symbol_id, quarter, data, status_code
+                            )
 
-                            # Always add records (even for no_data or error status)
                             if records:
                                 symbol_records.extend(records)
-                                if status == 'pass':
-                                    print(f"✓ Processed {symbol} {quarter} (ID: {symbol_id}) - {len(records)} records [{call_count}/{total_calls}]")
-                                elif status == 'no_data':
-                                    print(f"○ Processed {symbol} {quarter} (ID: {symbol_id}) - No data available [{call_count}/{total_calls}]")
+                                if status_code == 'pass':
+                                    print(
+                                        f"✓ Processed {symbol} {quarter} (ID: {symbol_id}) - {len(records)} records [{call_count}/{total_calls}]"
+                                    )
+                                elif status_code == 'no_data':
+                                    print(
+                                        f"○ Processed {symbol} {quarter} (ID: {symbol_id}) - No data available [{call_count}/{total_calls}]"
+                                    )
                                 else:
-                                    print(f"! Processed {symbol} {quarter} (ID: {symbol_id}) - {status} [{call_count}/{total_calls}]")
+                                    print(
+                                        f"! Processed {symbol} {quarter} (ID: {symbol_id}) - {status_code} [{call_count}/{total_calls}]"
+                                    )
                             else:
-                                print(f"✗ Processed {symbol} {quarter} (ID: {symbol_id}) - Transform failed [{call_count}/{total_calls}]")
+                                print(
+                                    f"✗ Processed {symbol} {quarter} (ID: {symbol_id}) - Transform failed [{call_count}/{total_calls}]"
+                                )
+
+                            # Track consecutive missing quarters
+                            if status_code == 'no_data':
+                                consecutive_no_data += 1
+                            else:
+                                consecutive_no_data = 0
+
+                            if consecutive_no_data >= 4:
+                                print(
+                                    f"  Reached 4 consecutive missing quarters for {symbol}, stopping early"
+                                )
+                                break
 
                         except Exception as e:
-                            print(f"✗ Error processing {symbol} {quarter} (ID: {symbol_id}): {e} [{call_count}/{total_calls}]")
-                            # Continue processing other quarters even if one fails
+                            print(
+                                f"✗ Error processing {symbol} {quarter} (ID: {symbol_id}): {e} [{call_count}/{total_calls}]"
+                            )
                             continue
 
-                        # Rate limiting - wait between requests
                         if call_count < total_calls:
                             time.sleep(self.rate_limit_delay)
 
@@ -450,69 +485,49 @@ class EarningsCallTranscriptsExtractor:
             print(f"Incremental Earnings Call Transcripts ETL process failed: {e}")
             raise
 
-    def get_quarters_for_symbol(self, ipo_date):
-        """Generate quarters from IPO date to present for a symbol."""
-        from datetime import datetime
+    def get_quarters_for_symbol(self, ipo_date, delisting_date=None):
+        """Generate quarters for a symbol in reverse chronological order.
 
-        # If no IPO date, default to 2010Q1 (earliest supported)
-        if not ipo_date:
-            print("  No IPO date found, defaulting to 2010Q1")
-            start_year = 2010
-            start_quarter = 1
-        else:
-            try:
-                # Parse IPO date
-                if isinstance(ipo_date, str):
-                    ipo_datetime = datetime.strptime(ipo_date, '%Y-%m-%d')
-                else:
-                    ipo_datetime = ipo_date
+        Starts from the most recent quarter (or delisting quarter if provided)
+        and moves backwards to either the IPO quarter or 2010Q1, whichever is later.
+        """
 
-                start_year = ipo_datetime.year
+        def parse_date(d):
+            if not d:
+                return None
+            if isinstance(d, str):
+                try:
+                    return datetime.strptime(d, "%Y-%m-%d").date()
+                except ValueError:
+                    return None
+            if isinstance(d, datetime):
+                return d.date()
+            return d
 
-                # Determine quarter based on month
-                month = ipo_datetime.month
-                if month <= 3:
-                    start_quarter = 1
-                elif month <= 6:
-                    start_quarter = 2
-                elif month <= 9:
-                    start_quarter = 3
-                else:
-                    start_quarter = 4
+        def to_year_quarter(dt: date):
+            return dt.year, (dt.month - 1) // 3 + 1
 
-                # Don't go earlier than 2010Q1 (API limitation for earnings transcripts)
-                if start_year < 2010 or (start_year == 2010 and start_quarter < 1):
-                    print(f"  IPO date {ipo_date} is before 2010Q1, starting from 2010Q1 (API minimum)")
-                    start_year = 2010
-                    start_quarter = 1
+        ipo_dt = parse_date(ipo_date)
+        delist_dt = parse_date(delisting_date)
+        start_dt = delist_dt or datetime.now().date()
+        earliest_dt = max(date(2010, 1, 1), ipo_dt) if ipo_dt else date(2010, 1, 1)
 
-                print(f"  IPO date: {ipo_date}, starting from {start_year}Q{start_quarter}")
+        start_year, start_quarter = to_year_quarter(start_dt)
+        end_year, end_quarter = to_year_quarter(earliest_dt)
 
-            except (ValueError, TypeError) as e:
-                print(f"  Error parsing IPO date {ipo_date}: {e}, defaulting to 2010Q1")
-                start_year = 2010
-                start_quarter = 1
-
-        # Generate quarters from start date to present (2024Q3)
         quarters = []
-        current_year = 2024
-        current_quarter = 3  # Latest quarter we're processing
+        year, quarter = start_year, start_quarter
+        while year > end_year or (year == end_year and quarter >= end_quarter):
+            quarters.append(f"{year}Q{quarter}")
+            quarter -= 1
+            if quarter == 0:
+                quarter = 4
+                year -= 1
 
-        for year in range(start_year, current_year + 1):
-            if year == start_year:
-                # For the starting year, begin from the calculated quarter
-                for quarter in range(start_quarter, 5):
-                    quarters.append(f"{year}Q{quarter}")
-            elif year == current_year:
-                # For the current year, only go up to current quarter
-                for quarter in range(1, current_quarter + 1):
-                    quarters.append(f"{year}Q{quarter}")
-            else:
-                # For all years in between, include all quarters
-                for quarter in range(1, 5):
-                    quarters.append(f"{year}Q{quarter}")
-
-        print(f"  Generated {len(quarters)} quarters: {quarters[0] if quarters else 'none'} to {quarters[-1] if quarters else 'none'}")
+        if quarters:
+            print(
+                f"  Generated {len(quarters)} quarters: {quarters[0]} to {quarters[-1]}"
+            )
         return quarters
 
 def main():
