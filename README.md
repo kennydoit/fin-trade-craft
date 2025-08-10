@@ -31,17 +31,17 @@
 
 # Alpha Vantage API
 
-| Frequency | Source | Size |
-|-----------|----------------------------|------|
-| Quarterly | cash flow | ** |
-| Quarterly | income statement | ** |
-| Quarterly | balance sheet | ** |
-| Quarterly | earnings call transcripts | *** |
-| Varied | insider transactions | *** |
-| Varied | news stories | *** |
-| Daily | commodities | * |
-| Daily | economic indicators | * |
-| Daily | OHLCV | *** |
+| Frequency | Source | Size | API Calls
+|-----------|----------------------------|---------|----------------------------|
+| Daily | OHLCV | Large | High |
+| Daily | commodities | Small | Low |
+| Daily | economic indicators | Small | Low |
+| Varied | news stories | Large | Very High |
+| Varied | insider transactions | Large | High |
+| Quarterly | earnings call transcripts | Large | Extremely High (~10 calls/symbol)|
+| Quarterly | cash flow | Medium | High |
+| Quarterly | income statement | Medium | High |
+| Quarterly | balance sheet | Medium | High |
 
 # Directory Structure
 
