@@ -56,7 +56,7 @@ class TimeSeriesExtractor:
             # Handle asset_type filter (default to 'Stock' for backward compatibility)
             if asset_type_filter is None:
                 asset_type_filter = 'Stock'
-            
+
             if asset_type_filter:
                 if isinstance(asset_type_filter, list):
                     placeholders = ",".join(["%s" for _ in asset_type_filter])
@@ -110,7 +110,7 @@ class TimeSeriesExtractor:
             # Handle asset_type filter (default to 'Stock' for backward compatibility)
             if asset_type_filter is None:
                 asset_type_filter = 'Stock'
-            
+
             if asset_type_filter:
                 if isinstance(asset_type_filter, list):
                     placeholders = ",".join(["%s" for _ in asset_type_filter])
@@ -384,7 +384,7 @@ class TimeSeriesExtractor:
         # Handle asset_type filter (default to 'Stock' for backward compatibility)
         if asset_type_filter is None:
             asset_type_filter = 'Stock'
-        
+
         if asset_type_filter:
             if isinstance(asset_type_filter, list):
                 placeholders = ",".join(["%s" for _ in asset_type_filter])
@@ -432,7 +432,7 @@ class TimeSeriesExtractor:
         # Handle asset_type filter (default to 'Stock' for backward compatibility)
         if asset_type_filter is None:
             asset_type_filter = 'Stock'
-        
+
         if asset_type_filter:
             if isinstance(asset_type_filter, list):
                 placeholders = ",".join(["%s" for _ in asset_type_filter])
@@ -569,18 +569,18 @@ def main():
     #     exchange_filter="NASDAQ", limit=6000
     # )  # Increased for premium tier
 
-    # Option 2: Extract ETFs specifically 
+    # Option 2: Extract ETFs specifically
     # extractor_etf = TimeSeriesExtractor(output_size="full")
     # extractor_etf.run_etl_incremental(
-    #     exchange_filter=['NYSE', 'NASDAQ', 'NYSE ARCA', 'BATS'], 
+    #     exchange_filter=['NYSE', 'NASDAQ', 'NYSE ARCA', 'BATS'],
     #     asset_type_filter='ETF',
     #     limit=1500  # Start with just 5 ETFs for testing
     # )
 
-    # Option 2: Extract ETFs specifically 
+    # Option 2: Extract ETFs specifically
     extractor_etf = TimeSeriesExtractor(output_size="full")
     extractor_etf.run_etl_incremental(
-        exchange_filter=['NYSE ARCA', 'BATS', 'NYSE MKT'], 
+        exchange_filter=['NYSE ARCA', 'BATS', 'NYSE MKT'],
         asset_type_filter='ETF',
         limit=5000  # Start with just 5 ETFs for testing
     )

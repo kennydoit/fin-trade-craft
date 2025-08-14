@@ -3,8 +3,7 @@
 Check source table columns to understand the structure
 """
 import os
-import sys
-from pathlib import Path
+
 import psycopg2
 from dotenv import load_dotenv
 
@@ -19,10 +18,10 @@ def check_source_columns():
         password=os.getenv('POSTGRES_PASSWORD')
     )
     cursor = conn.cursor()
-    
+
     print("🔍 Checking Source Table Columns")
     print("=" * 50)
-    
+
     # Overview columns
     cursor.execute("""
         SELECT column_name 
@@ -31,11 +30,11 @@ def check_source_columns():
         ORDER BY ordinal_position
     """)
     overview_cols = [r[0] for r in cursor.fetchall()]
-    
+
     print("📈 Overview table columns:")
     for col in overview_cols:
         print(f"  {col}")
-    
+
     # Listing status columns
     cursor.execute("""
         SELECT column_name 
@@ -44,24 +43,24 @@ def check_source_columns():
         ORDER BY ordinal_position
     """)
     listing_cols = [r[0] for r in cursor.fetchall()]
-    
-    print(f"\n📋 Listing_status table columns:")
+
+    print("\n📋 Listing_status table columns:")
     for col in listing_cols:
         print(f"  {col}")
-    
+
     # Sample data to understand the structure
-    print(f"\n📊 Sample overview data:")
+    print("\n📊 Sample overview data:")
     cursor.execute("SELECT symbol, name, sector, exchange FROM extracted.overview LIMIT 3")
     overview_samples = cursor.fetchall()
     for row in overview_samples:
         print(f"  {row}")
-    
-    print(f"\n📊 Sample listing_status data:")
+
+    print("\n📊 Sample listing_status data:")
     cursor.execute("SELECT symbol, name, asset_type, exchange FROM extracted.listing_status LIMIT 3")
     listing_samples = cursor.fetchall()
     for row in listing_samples:
         print(f"  {row}")
-    
+
     cursor.close()
     conn.close()
 

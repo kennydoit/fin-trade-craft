@@ -4,6 +4,7 @@ Create Active Stocks View - Filtered Company Master
 Focus on NYSE/NASDAQ stocks, excluding ETFs and other asset types
 """
 import os
+
 import psycopg2
 from dotenv import load_dotenv
 
@@ -11,7 +12,7 @@ load_dotenv()
 
 def create_active_stocks_view():
     """Create a view for active stocks only"""
-    
+
     conn = psycopg2.connect(
         host=os.getenv('POSTGRES_HOST', 'localhost'),
         port=os.getenv('POSTGRES_PORT', '5432'),
@@ -19,16 +20,16 @@ def create_active_stocks_view():
         user=os.getenv('POSTGRES_USER', 'postgres'),
         password=os.getenv('POSTGRES_PASSWORD')
     )
-    
+
     cursor = conn.cursor()
-    
+
     try:
         print("🎯 Creating Active Stocks View")
         print("=" * 50)
-        
+
         # First, let's check what asset types and exchanges we have
         print("📊 Analyzing current data...")
-        
+
         cursor.execute("""
             SELECT asset_type, COUNT(*) as count
             FROM transformed.company_master 
@@ -37,11 +38,11 @@ def create_active_stocks_view():
             ORDER BY count DESC
         """)
         asset_types = cursor.fetchall()
-        
+
         print("Asset Types in database:")
         for asset_type, count in asset_types:
             print(f"  - {asset_type}: {count:,} companies")
-        
+
         cursor.execute("""
             SELECT exchange, COUNT(*) as count
             FROM transformed.company_master 
@@ -51,17 +52,17 @@ def create_active_stocks_view():
             LIMIT 10
         """)
         exchanges = cursor.fetchall()
-        
+
         print("\nTop Exchanges:")
         for exchange, count in exchanges:
             print(f"  - {exchange}: {count:,} companies")
-        
+
         # Create the view
         print("\n🏗️  Creating active_stocks view...")
-        
+
         # Drop existing view if it exists
         cursor.execute("DROP VIEW IF EXISTS transformed.active_stocks;")
-        
+
         # Create the filtered view
         create_view_sql = """
             CREATE VIEW transformed.active_stocks AS
@@ -102,16 +103,16 @@ def create_active_stocks_view():
                 AND symbol != ''
             ORDER BY symbol;
         """
-        
+
         cursor.execute(create_view_sql)
         conn.commit()
-        
+
         print("✅ Created transformed.active_stocks view")
-        
+
         # Get statistics on the filtered view
         cursor.execute("SELECT COUNT(*) FROM transformed.active_stocks")
         active_count = cursor.fetchone()[0]
-        
+
         cursor.execute("""
             SELECT 
                 COUNT(*) as total,
@@ -120,12 +121,12 @@ def create_active_stocks_view():
             FROM transformed.active_stocks
         """)
         stats = cursor.fetchone()
-        
-        print(f"\n📈 Active Stocks View Statistics:")
+
+        print("\n📈 Active Stocks View Statistics:")
         print(f"✅ Total active stocks: {active_count:,}")
         print(f"📊 With financial data: {stats[1]:,}")
         print(f"📉 With price data: {stats[2]:,}")
-        
+
         # Show some examples
         print("\n📋 Sample Active Stocks:")
         cursor.execute("""
@@ -136,17 +137,17 @@ def create_active_stocks_view():
             ORDER BY time_series_daily_adjusted_count DESC
             LIMIT 10
         """)
-        
+
         samples = cursor.fetchall()
         for s in samples:
             name = s[1][:35] + "..." if s[1] and len(s[1]) > 35 else s[1]
             print(f"  {s[0]}: {name} ({s[2]}) - CF:{s[4]}, TS:{s[5]}")
-        
+
         # Create an even more focused view for analysis-ready stocks
         print("\n🎯 Creating analysis_ready_stocks view...")
-        
+
         cursor.execute("DROP VIEW IF EXISTS transformed.analysis_ready_stocks;")
-        
+
         analysis_view_sql = """
             CREATE VIEW transformed.analysis_ready_stocks AS
             SELECT *
@@ -163,16 +164,16 @@ def create_active_stocks_view():
                 AND sector IS NOT NULL
             ORDER BY symbol;
         """
-        
+
         cursor.execute(analysis_view_sql)
         conn.commit()
-        
+
         cursor.execute("SELECT COUNT(*) FROM transformed.analysis_ready_stocks")
         analysis_ready_count = cursor.fetchone()[0]
-        
-        print(f"✅ Created transformed.analysis_ready_stocks view")
+
+        print("✅ Created transformed.analysis_ready_stocks view")
         print(f"📊 Analysis-ready stocks: {analysis_ready_count:,}")
-        
+
         print("\n" + "=" * 50)
         print("🎉 Active Stocks Views Created Successfully!")
         print("\n📋 Available Views:")
@@ -182,12 +183,12 @@ def create_active_stocks_view():
         print("  SELECT * FROM transformed.active_stocks WHERE sector = 'TECHNOLOGY';")
         print("  SELECT * FROM transformed.analysis_ready_stocks LIMIT 100;")
         print("=" * 50)
-        
+
     except Exception as e:
         print(f"❌ Error creating views: {str(e)}")
         conn.rollback()
         raise
-        
+
     finally:
         cursor.close()
         conn.close()

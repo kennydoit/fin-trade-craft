@@ -328,7 +328,7 @@ class PostgresDatabaseManager:
         """Check if a table exists in the specified schema."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             query = """
@@ -348,7 +348,7 @@ class PostgresDatabaseManager:
         """Get information about a table including row count and columns."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             # Get column information
@@ -360,12 +360,12 @@ class PostgresDatabaseManager:
             """
             cursor.execute(columns_query, (schema_name, table_name))
             columns = cursor.fetchall()
-            
+
             # Get row count
             count_query = f"SELECT COUNT(*) FROM {schema_name}.{table_name};"
             cursor.execute(count_query)
             row_count = cursor.fetchone()[0]
-            
+
             return {
                 'table_name': table_name,
                 'schema_name': schema_name,
@@ -381,7 +381,7 @@ class PostgresDatabaseManager:
         """List all schemas in the database."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             query = """
@@ -401,7 +401,7 @@ class PostgresDatabaseManager:
         """List all tables in the specified schema."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             query = """

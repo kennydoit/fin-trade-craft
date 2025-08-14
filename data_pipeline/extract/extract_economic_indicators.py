@@ -53,7 +53,7 @@ class EconomicIndicatorsExtractor:
 
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
-        
+
     def create_economic_indicators_table_if_not_exists(self, db):
         """Create the economic_indicators table in the extracted schema if it doesn't exist."""
         create_table_sql = """
@@ -477,10 +477,10 @@ class EconomicIndicatorsExtractor:
     def transform_to_daily_data(self, db):
         """Transform all economic indicators data to daily frequency using forward filling."""
         print("\nStarting daily transformation of economic indicators...")
-        
+
         # Create the daily table if it doesn't exist
         self.create_daily_table_if_not_exists(db)
-        
+
         # Get all data records from the main table
         query = """
             SELECT economic_indicator_name, function_name, maturity, date, interval as original_interval,
@@ -489,47 +489,47 @@ class EconomicIndicatorsExtractor:
             WHERE api_response_status = 'data' AND date IS NOT NULL
             ORDER BY economic_indicator_name, function_name, maturity, date
         """
-        
+
         source_data = db.fetch_query(query)
         if not source_data:
             print("No source data found for transformation")
             return 0
-            
+
         print(f"Found {len(source_data)} source records to transform")
-        
+
         # Group data by indicator
         df = pd.DataFrame(source_data, columns=[
-            'economic_indicator_name', 'function_name', 'maturity', 'date', 
+            'economic_indicator_name', 'function_name', 'maturity', 'date',
             'original_interval', 'unit', 'value', 'name'
         ])
-        
+
         # Convert date column to datetime
         df['date'] = pd.to_datetime(df['date'])
-        
+
         total_inserted = 0
-        
+
         # Get all unique indicator combinations explicitly
         unique_combos = df[['economic_indicator_name', 'function_name', 'maturity']].drop_duplicates()
-        
+
         print(f"Found {len(unique_combos)} unique indicator groups to process")
-        
+
         for idx, (_, combo_row) in enumerate(unique_combos.iterrows()):
             indicator_name = combo_row['economic_indicator_name']
             function_name = combo_row['function_name']
             maturity = combo_row['maturity']
-            
+
             # Get the group data for this combination
             if pd.notna(maturity):
-                group = df[(df['economic_indicator_name'] == indicator_name) & 
-                          (df['function_name'] == function_name) & 
+                group = df[(df['economic_indicator_name'] == indicator_name) &
+                          (df['function_name'] == function_name) &
                           (df['maturity'] == maturity)]
             else:
-                group = df[(df['economic_indicator_name'] == indicator_name) & 
-                          (df['function_name'] == function_name) & 
+                group = df[(df['economic_indicator_name'] == indicator_name) &
+                          (df['function_name'] == function_name) &
                           (df['maturity'].isna())]
             try:
                 print(f"Processing {indicator_name} ({function_name}, maturity: {maturity})...")
-                
+
                 check_query = """
                     SELECT COUNT(*) FROM extracted.economic_indicators_daily
                     WHERE economic_indicator_name = %s AND function_name = %s
@@ -541,13 +541,13 @@ class EconomicIndicatorsExtractor:
                 if existing_count > 0:
                     print(f"  Skipping {indicator_name} - already exists")
                     continue
-                
+
                 # Sort by date and prepare for transformation
                 group = group.sort_values('date')
                 original_interval = group['original_interval'].iloc[0]
                 unit = group['unit'].iloc[0]
                 name = group['name'].iloc[0]
-                
+
                 if original_interval == 'daily':
                     # Daily data: just copy as-is
                     records = []
@@ -558,27 +558,27 @@ class EconomicIndicatorsExtractor:
                             False, row['date'].date()  # is_forward_filled=False, original_date=same
                         ))
                     print(f"  Daily data: {len(records)} records")
-                    
+
                 elif original_interval in ['monthly', 'quarterly']:
                     # Monthly/Quarterly data: forward fill to current date
                     records = []
-                    
+
                     # Get date range from first date to current date
                     start_date = group['date'].min().date()
                     end_date = date.today()
-                    
+
                     print(f"  {original_interval.title()} data: Forward filling from {start_date} to {end_date}")
-                    
+
                     # Create daily date range
                     date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-                    
+
                     # Forward fill the values
                     current_value = None
                     current_original_date = None
-                    
+
                     for current_date in date_range:
                         current_date = current_date.date()
-                        
+
                         # Check if we have a new value for this date
                         matching_rows = group[group['date'].dt.date == current_date]
                         if not matching_rows.empty:
@@ -589,7 +589,7 @@ class EconomicIndicatorsExtractor:
                         else:
                             # Use forward-filled value
                             is_forward_filled = True if current_value is not None else False
-                        
+
                         # Only add records if we have a value (either original or forward-filled)
                         if current_value is not None:
                             records.append((
@@ -597,9 +597,9 @@ class EconomicIndicatorsExtractor:
                                 original_interval, 'daily', unit, current_value, name,
                                 is_forward_filled, current_original_date
                             ))
-                    
+
                     print(f"  {original_interval.title()} data: {len(records)} daily records (forward-filled from {len(group)} original records)")
-                
+
                 # Insert the transformed records
                 if records:
                     insert_query = """
@@ -615,11 +615,11 @@ class EconomicIndicatorsExtractor:
                     print(f"  Inserted {inserted_count} daily records")
                 else:
                     print(f"  No records to insert for {indicator_name}")
-                    
+
             except Exception as e:
                 print(f"  ERROR processing {indicator_name}: {str(e)}")
                 continue  # Continue with next indicator
-        
+
         print(f"\nDaily transformation completed: {total_inserted} total records inserted")
         return total_inserted
 
@@ -634,11 +634,11 @@ class EconomicIndicatorsExtractor:
 
             if transform_to_daily:
                 daily_inserted = self.transform_to_daily_data(db)
-        
-        print(f"\nTotal ETL Summary:")
+
+        print("\nTotal ETL Summary:")
         print(f"  Original data inserted: {total_inserted}")
         print(f"  Daily transformed records: {daily_inserted}")
-        
+
         return total_inserted, daily_inserted, status_summary
 
     def run_etl_batch_with_db(self, db, indicator_list=None, batch_size=5):
