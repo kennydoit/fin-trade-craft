@@ -5,7 +5,40 @@ Creates the first table in the transformed schema by combining overview and list
 with data availability counts from other tables.
 
 Follows the specifications in prompts/transform_company_master.md
+
+```
+Edits Needed:
+remove company_master from the database and rebuild it with the following specification:
+
+[from extracted.listing_status]
+- symbol_id
+- symbol
+- name
+- exchange
+- asset_type
+- status
+- ipo_date
+- delisting_date
+[from extracted.overview]
+- overview_id
+- description
+- currency
+- country
+- sector
+- industry
+- address
+- officialsite
+- fiscalyearend
+- status_overview (append _overview to overview.status)
+[from create_table_flag aggregations]
+- cash_flow_count
+- income_statement_count
+- balance_sheet_count
+- insider_transactions_count
+- earnings_call_transcript_count
+- time_series_daily_adjusted_count
 """
+
 import os
 import sys
 from pathlib import Path
