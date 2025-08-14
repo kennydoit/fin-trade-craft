@@ -34,7 +34,7 @@ class CashFlowExtractor:
 
         # Rate limiting: 75 requests per minute for Alpha Vantage Premium
         self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
-    
+
     @property
     def db_manager(self):
         """Create a fresh database manager instance for each use."""

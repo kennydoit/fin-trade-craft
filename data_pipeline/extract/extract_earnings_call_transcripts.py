@@ -6,7 +6,7 @@ import hashlib
 import os
 import sys
 import time
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 
 import requests

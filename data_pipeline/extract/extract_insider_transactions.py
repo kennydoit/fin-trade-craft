@@ -282,10 +282,10 @@ class InsiderTransactionsExtractor:
                 def parse_transaction_date(date_str):
                     if not date_str or date_str == "None":
                         return "1900-01-01"  # Placeholder for missing dates
-                    
+
                     # Clean up common date format issues
                     date_str = str(date_str).strip()
-                    
+
                     # Remove timezone info if present (e.g., "2013-12-11-05:00")
                     if '-' in date_str and len(date_str) > 10:
                         # Split by '-' and take first 3 parts for YYYY-MM-DD
@@ -301,12 +301,12 @@ class InsiderTransactionsExtractor:
                                     return clean_date
                             except (ValueError, IndexError):
                                 pass
-                    
+
                     # Check for XML/HTML fragments and skip them
                     if '<' in date_str or '>' in date_str:
                         print(f"Skipping malformed date with XML: {date_str[:50]}...")
                         return "1900-01-01"
-                    
+
                     # Try standard date formats
                     for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d"]:
                         try:
@@ -314,7 +314,7 @@ class InsiderTransactionsExtractor:
                             return date_str[:10]
                         except ValueError:
                             continue
-                    
+
                     # If all parsing fails, use placeholder
                     print(f"Could not parse date '{date_str}' for {symbol}, using placeholder")
                     return "1900-01-01"
@@ -452,7 +452,7 @@ class InsiderTransactionsExtractor:
                         db, exchange_filter, limit
                     )
                     print(f"Found {len(symbol_mapping)} unprocessed symbols")
-                
+
                 symbols = list(symbol_mapping.keys())
 
                 if not symbols:

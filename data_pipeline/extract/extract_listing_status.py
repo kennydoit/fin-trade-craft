@@ -39,7 +39,7 @@ class ListingStatusExtractor:
 
         all_data = []
         states = ['active', 'delisted']
-        
+
         for state in states:
             print(f"Extracting {state} stocks...")
             url = f"{self.base_url}?function={STOCK_API_FUNCTION}&state={state}&apikey={self.api_key}"
@@ -50,10 +50,10 @@ class ListingStatusExtractor:
 
                 # Read CSV data directly from the response
                 df = pd.read_csv(url)
-                
+
                 # Add state column to track which API call this data came from
                 df['api_state'] = state
-                
+
                 print(f"Successfully extracted {len(df)} {state} records")
                 all_data.append(df)
 
@@ -67,7 +67,7 @@ class ListingStatusExtractor:
 
         if not all_data:
             raise Exception("No data received from any API calls")
-        
+
         # Combine all dataframes
         combined_df = pd.concat(all_data, ignore_index=True)
         print(f"Successfully extracted {len(combined_df)} total records")
@@ -123,7 +123,7 @@ class ListingStatusExtractor:
         # Select only columns that exist in our database schema
         required_columns = [
             "symbol",
-            "name", 
+            "name",
             "exchange",
             "asset_type",
             "ipo_date",
@@ -143,7 +143,7 @@ class ListingStatusExtractor:
         # First check for duplicates
         initial_count = len(df_transformed)
         duplicate_symbols = df_transformed[df_transformed.duplicated(subset=['symbol'], keep=False)]
-        
+
         if len(duplicate_symbols) > 0:
             print(f"Found {len(duplicate_symbols)} duplicate symbol entries")
             # Use api_state for sorting since it's more reliable than status for this purpose
@@ -159,10 +159,10 @@ class ListingStatusExtractor:
         else:
             df_deduped = df_transformed
             print("No duplicate symbols found")
-        
+
         # Now select only the required columns
         df_final = df_deduped[available_columns]
-        
+
         # Final check for duplicates
         final_duplicates = df_final[df_final.duplicated(subset=['symbol'])]
         if len(final_duplicates) > 0:
@@ -171,7 +171,7 @@ class ListingStatusExtractor:
 
         print(f"Transformed data with columns: {list(df_final.columns)}")
         print(f"Final record count: {len(df_final)}")
-        print(f"✅ Status column captures active/delisted state information")
+        print("✅ Status column captures active/delisted state information")
         return df_final
 
     def load_data(self, df):
@@ -192,7 +192,7 @@ class ListingStatusExtractor:
             """
             result = db.fetch_query(table_exists_query)
             table_exists = result[0][0] if result else False
-            
+
             if not table_exists:
                 print("Table extracted.listing_status does not exist!")
                 print("Please run the schema initialization first or check your database setup.")
@@ -202,13 +202,13 @@ class ListingStatusExtractor:
             print("🛡️ Performing SAFE data replacement...")
             if not safety_manager.safe_delete_table_data('listing_status', 'listing_status_update'):
                 raise Exception("Safe deletion failed - operation aborted")
-            
+
             # Reset the sequence for symbol_id if it exists
             try:
                 db.execute_query("ALTER SEQUENCE IF EXISTS extracted.listing_status_symbol_id_seq RESTART WITH 1;")
             except Exception as e:
                 print(f"Note: Could not reset sequence (this is normal if no sequence exists): {e}")
-            
+
             # Prepare data for batch insert
             records = []
             for index, row in df.iterrows():
@@ -224,23 +224,23 @@ class ListingStatusExtractor:
                 columns = list(records[0].keys())
                 placeholders = ', '.join(['%s'] * len(columns))
                 columns_str = ', '.join(columns)
-                
+
                 insert_query = f"""
                     INSERT INTO extracted.listing_status ({columns_str})
                     VALUES ({placeholders})
                 """
-                
+
                 # Prepare data for batch insert
                 data_to_insert = []
                 for record in records:
                     row_values = [record[col] for col in columns]
                     data_to_insert.append(row_values)
-                
+
                 # Execute batch insert
                 db.execute_many(insert_query, data_to_insert)
-                
+
             print(f"✅ Successfully replaced all records with {len(df)} new records in listing_status table")
-            
+
             # Verify integrity after operation
             safety_manager.verify_table_integrity('listing_status')
 

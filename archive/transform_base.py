@@ -3,26 +3,27 @@
 Foundation for data transformation pipeline
 Transforms raw extracted data into business-ready datasets
 """
-import os
 import sys
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
+
 import pandas as pd
 
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 
+
 class DataTransformer:
     """Base class for data transformation operations"""
-    
+
     def __init__(self):
         self.db_manager = PostgresDatabaseManager()
-    
+
     def transform_company_profiles(self):
         """Transform overview data into enriched company profiles"""
         print("🏢 Transforming company profiles...")
-        
+
         with self.db_manager as db:
             # Extract data from extracted.overview
             extract_query = """
@@ -49,13 +50,13 @@ class DataTransformer:
                 FROM extracted.overview
                 WHERE symbol IS NOT NULL
             """
-            
+
             raw_data = db.fetch_query(extract_query)
-            
+
             if not raw_data:
                 print("No data found in extracted.overview")
                 return
-            
+
             # Convert to DataFrame for easier manipulation
             columns = [
                 'symbol', 'name', 'description', 'sector', 'industry',
@@ -77,29 +78,28 @@ class DataTransformer:
                 'payout_ratio', 'dividend_date', 'ex_dividend_date',
                 'last_split_factor', 'last_split_date'
             ]
-            
+
             df = pd.DataFrame(raw_data, columns=columns)
-            
+
             # Clean and transform data
             df['market_cap'] = pd.to_numeric(df['market_capitalization'], errors='coerce')
-            
+
             # Categorize market cap
             def categorize_market_cap(market_cap):
                 if pd.isna(market_cap):
                     return 'Unknown'
-                elif market_cap >= 200_000_000_000:  # $200B+
+                if market_cap >= 200_000_000_000:  # $200B+
                     return 'Mega'
-                elif market_cap >= 10_000_000_000:   # $10B+
+                if market_cap >= 10_000_000_000:   # $10B+
                     return 'Large'
-                elif market_cap >= 2_000_000_000:    # $2B+
+                if market_cap >= 2_000_000_000:    # $2B+
                     return 'Mid'
-                elif market_cap >= 300_000_000:      # $300M+
+                if market_cap >= 300_000_000:      # $300M+
                     return 'Small'
-                else:
-                    return 'Micro'
-            
+                return 'Micro'
+
             df['market_cap_category'] = df['market_cap'].apply(categorize_market_cap)
-            
+
             # Prepare data for insertion
             insert_records = []
             for _, row in df.iterrows():
@@ -117,7 +117,7 @@ class DataTransformer:
                     datetime.now()   # updated_at
                 )
                 insert_records.append(record)
-            
+
             # Insert into transformed.company_profiles
             insert_query = """
                 INSERT INTO transformed.company_profiles 
@@ -135,18 +135,18 @@ class DataTransformer:
                     exchange = EXCLUDED.exchange,
                     updated_at = EXCLUDED.updated_at
             """
-            
+
             inserted_count = db.execute_many(insert_query, insert_records)
             print(f"✅ Processed {len(insert_records)} company profiles")
-    
+
     def transform_stock_performance(self, limit_days=30):
         """Transform daily price data into performance metrics"""
         print(f"📈 Transforming stock performance data (last {limit_days} days)...")
-        
+
         with self.db_manager as db:
             # Get recent stock data
             cutoff_date = datetime.now().date() - timedelta(days=limit_days)
-            
+
             extract_query = """
                 SELECT symbol, date, open, high, low, close, 
                        adjusted_close, volume, dividend_amount, split_coefficient
@@ -155,44 +155,44 @@ class DataTransformer:
                 AND symbol IS NOT NULL
                 ORDER BY symbol, date
             """
-            
+
             raw_data = db.fetch_query(extract_query, (cutoff_date,))
-            
+
             if not raw_data:
                 print("No recent stock data found")
                 return
-            
+
             df = pd.DataFrame(raw_data, columns=[
                 'symbol', 'date', 'open', 'high', 'low', 'close',
                 'adjusted_close', 'volume', 'dividend_amount', 'split_coefficient'
             ])
-            
+
             # Convert data types
             df['date'] = pd.to_datetime(df['date'])
             numeric_cols = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume']
             for col in numeric_cols:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-            
+
             # Calculate technical indicators and performance metrics
             transformed_records = []
-            
+
             for symbol in df['symbol'].unique():
                 symbol_data = df[df['symbol'] == symbol].sort_values('date')
-                
+
                 if len(symbol_data) < 20:  # Need at least 20 days for indicators
                     continue
-                
+
                 # Calculate moving averages
                 symbol_data['sma_20'] = symbol_data['adjusted_close'].rolling(window=20).mean()
                 symbol_data['sma_50'] = symbol_data['adjusted_close'].rolling(window=50).mean()
                 symbol_data['sma_200'] = symbol_data['adjusted_close'].rolling(window=200).mean()
-                
+
                 # Calculate daily returns
                 symbol_data['daily_return'] = symbol_data['adjusted_close'].pct_change()
-                
+
                 # Calculate 30-day rolling volatility
                 symbol_data['volatility_30d'] = symbol_data['daily_return'].rolling(window=30).std()
-                
+
                 # Calculate RSI (simplified version)
                 def calculate_rsi(prices, period=14):
                     delta = prices.diff()
@@ -201,9 +201,9 @@ class DataTransformer:
                     rs = gain / loss
                     rsi = 100 - (100 / (1 + rs))
                     return rsi
-                
+
                 symbol_data['rsi_14'] = calculate_rsi(symbol_data['adjusted_close'])
-                
+
                 # Prepare records for insertion
                 for _, row in symbol_data.iterrows():
                     if pd.notna(row['sma_20']):  # Only include rows with calculated indicators
@@ -225,7 +225,7 @@ class DataTransformer:
                             datetime.now()
                         )
                         transformed_records.append(record)
-            
+
             if transformed_records:
                 # Insert into transformed.stock_performance
                 insert_query = """
@@ -249,29 +249,29 @@ class DataTransformer:
                         volatility_30d = EXCLUDED.volatility_30d,
                         created_at = EXCLUDED.created_at
                 """
-                
+
                 db.execute_many(insert_query, transformed_records)
                 print(f"✅ Processed {len(transformed_records)} stock performance records")
-    
+
     def run_all_transformations(self):
         """Run all transformation processes"""
         print("🔄 Starting data transformation pipeline...")
         print("=" * 60)
-        
+
         try:
             # Transform company profiles
             self.transform_company_profiles()
-            
+
             # Transform stock performance
             self.transform_stock_performance()
-            
+
             print("\n" + "=" * 60)
             print("🎉 Data transformation pipeline completed successfully!")
             print("✅ Company profiles transformed")
             print("✅ Stock performance metrics calculated")
             print("\nTransformed data is now available in 'transformed' schema")
             print("=" * 60)
-            
+
         except Exception as e:
             print(f"\n❌ Transformation failed: {str(e)}")
             import traceback
