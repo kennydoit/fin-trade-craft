@@ -1,0 +1,8 @@
+Defaulting to user installation because normal site-packages is not writeable
+Collecting pyarrow
+  Downloading pyarrow-21.0.0-cp312-cp312-manylinux_2_28_x86_64.whl.metadata
+     - 3.3 kB ? 0:00:00
+Downloading pyarrow-21.0.0-cp312-cp312-manylinux_2_28_x86_64.whl
+   / 42.8 MB 250.7 MB/s 0:00:00
+Installing collected packages: pyarrow
+Successfully installed pyarrow-21.0.0
