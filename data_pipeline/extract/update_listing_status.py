@@ -16,15 +16,17 @@ The implementation reuses the extraction and transformation logic from
 ``extract_listing_status.py`` and only overrides the loading behaviour
 with update semantics.
 """
+
 import sys
 from pathlib import Path
-from typing import Dict, List
 
 import pandas as pd
 
 # Allow imports from project root
 sys.path.append(str(Path(__file__).parent.parent.parent))
-from data_pipeline.extract.extract_listing_status import ListingStatusExtractor  # noqa: E402
+from data_pipeline.extract.extract_listing_status import (
+    ListingStatusExtractor,  # noqa: E402
+)
 
 
 class ListingStatusUpdater(ListingStatusExtractor):
@@ -38,18 +40,18 @@ class ListingStatusUpdater(ListingStatusExtractor):
         print("Updating listing_status table...")
 
         with self.db_manager as db:
-            if not db.table_exists("listing_status"):
-                raise Exception("Table listing_status does not exist")
+            if not db.table_exists("listing_status", schema_name="extracted"):
+                raise Exception("Table extracted.listing_status does not exist")
 
             existing_df = db.fetch_dataframe(
                 """
                 SELECT symbol_id, symbol, name, exchange, asset_type,
                        ipo_date, delisting_date, status,
                        created_at, updated_at
-                FROM listing_status
+                FROM extracted.listing_status
                 """
             )
-            existing_df.set_index("symbol", inplace=True)
+            existing_df = existing_df.set_index("symbol")
 
             columns_to_compare = [
                 "name",
@@ -60,8 +62,8 @@ class ListingStatusUpdater(ListingStatusExtractor):
                 "status",
             ]
 
-            new_records: List[Dict[str, object]] = []
-            update_records: List[Dict[str, object]] = []
+            new_records: list[dict[str, object]] = []
+            update_records: list[dict[str, object]] = []
 
             for _, row in df.iterrows():
                 symbol = row["symbol"]
@@ -112,7 +114,7 @@ class ListingStatusUpdater(ListingStatusExtractor):
                 ]
                 placeholders = ", ".join(["%s"] * len(insert_cols))
                 insert_query = f"""
-                    INSERT INTO listing_status ({', '.join(insert_cols)})
+                    INSERT INTO extracted.listing_status ({', '.join(insert_cols)})
                     VALUES ({placeholders})
                 """
                 insert_params = [
@@ -125,7 +127,7 @@ class ListingStatusUpdater(ListingStatusExtractor):
 
             if update_records:
                 update_query = """
-                    UPDATE listing_status
+                    UPDATE extracted.listing_status
                     SET name = %s,
                         exchange = %s,
                         asset_type = %s,
@@ -138,17 +140,19 @@ class ListingStatusUpdater(ListingStatusExtractor):
                 """
                 update_params = []
                 for rec in update_records:
-                    update_params.append([
-                        rec["name"],
-                        rec["exchange"],
-                        rec["asset_type"],
-                        rec.get("ipo_date"),
-                        rec.get("delisting_date"),
-                        rec["status"],
-                        rec["created_at"],
-                        rec["updated_at"],
-                        rec["symbol"],
-                    ])
+                    update_params.append(
+                        [
+                            rec["name"],
+                            rec["exchange"],
+                            rec["asset_type"],
+                            rec.get("ipo_date"),
+                            rec.get("delisting_date"),
+                            rec["status"],
+                            rec["created_at"],
+                            rec["updated_at"],
+                            rec["symbol"],
+                        ]
+                    )
                 db.execute_many(update_query, update_params)
                 print(f"Updated {len(update_records)} existing symbols")
             else:
