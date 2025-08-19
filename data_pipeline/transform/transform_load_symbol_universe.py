@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Load symbol universes into the transform schema.
+"""Load symbol universes into the transformed schema.
 
-This module creates and appends records to the ``transform.symbol_universes``
+This module creates and appends records to the ``transformed.symbol_universes``
 table. It accepts input data either as a CSV file path or a
 :class:`pandas.DataFrame`. Two additional columns are automatically generated
 for each load:
@@ -16,7 +16,7 @@ recreated before loading the new records.
 
 The table schema is created as::
 
-    transform.symbol_universes(
+    transformed.symbol_universes(
         universe_id       UUID,
         universe_name     VARCHAR,
         symbol            VARCHAR,
@@ -38,7 +38,7 @@ import argparse
 import sys
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -49,11 +49,11 @@ from db.postgres_database_manager import PostgresDatabaseManager
 
 
 def _ensure_table(db: PostgresDatabaseManager) -> None:
-    """Create ``transform.symbol_universes`` if it does not exist."""
-    if not db.table_exists("symbol_universes", "transform"):
-        db.execute_query("CREATE SCHEMA IF NOT EXISTS transform")
+    """Create ``transformed.symbol_universes`` if it does not exist."""
+    if not db.table_exists("symbol_universes", "transformed"):
+        db.execute_query("CREATE SCHEMA IF NOT EXISTS transformed")
         create_sql = """
-            CREATE TABLE transform.symbol_universes (
+            CREATE TABLE transformed.symbol_universes (
                 universe_id UUID NOT NULL,
                 universe_name VARCHAR NOT NULL,
                 symbol VARCHAR NOT NULL,
@@ -68,8 +68,8 @@ def _ensure_table(db: PostgresDatabaseManager) -> None:
 
 
 def _recreate_table(db: PostgresDatabaseManager) -> None:
-    """Drop and recreate ``transform.symbol_universes``."""
-    db.execute_query("DROP TABLE IF EXISTS transform.symbol_universes")
+    """Drop and recreate ``transformed.symbol_universes``."""
+    db.execute_query("DROP TABLE IF EXISTS transformed.symbol_universes")
     _ensure_table(db)
 
 
@@ -89,7 +89,7 @@ def load_symbol_universe(
     universe_name:
         Name of the universe to apply to all rows.
     start_fresh:
-        When ``True`` the ``transform.symbol_universes`` table will be
+        When ``True`` the ``transformed.symbol_universes`` table will be
         dropped and recreated before loading the new data.
 
     Returns
@@ -111,7 +111,7 @@ def load_symbol_universe(
         raise ValueError(f"Input data missing required columns: {missing}")
 
     universe_id = uuid.uuid4()
-    load_time = datetime.now(datetime.UTC)
+    load_time = datetime.now(timezone.utc)
 
     db = PostgresDatabaseManager()
     db.connect()
@@ -138,7 +138,7 @@ def load_symbol_universe(
             )
 
         insert_sql = """
-            INSERT INTO transform.symbol_universes (
+            INSERT INTO transformed.symbol_universes (
                 universe_id,
                 universe_name,
                 symbol,
@@ -150,7 +150,7 @@ def load_symbol_universe(
         """
         db.execute_many(insert_sql, insert_rows)
         print(  # noqa: T201
-            f"Loaded {len(insert_rows)} rows into transform.symbol_universes with universe_id {universe_id}"
+            f"Loaded {len(insert_rows)} rows into transformed.symbol_universes with universe_id {universe_id}"
         )
         return universe_id
     finally:
@@ -161,7 +161,7 @@ def _parse_args(argv: Iterable[str]) -> tuple[Path, str, bool]:
     """Parse command line arguments."""
 
     parser = argparse.ArgumentParser(
-        description="Load symbol universe CSV into transform.symbol_universes"
+        description="Load symbol universe CSV into transformed.symbol_universes"
     )
     parser.add_argument("csv", type=Path, help="CSV file containing symbol data")
     parser.add_argument("--universe-name", required=True, help="Name of the universe")
@@ -180,5 +180,29 @@ def main(argv: Iterable[str] | None = None) -> None:
     load_symbol_universe(csv_path, universe_name, start_fresh=start_fresh)
 
 
+def test_load_ipo_universe() -> None:
+    """Test function to load the IPO universe CSV file."""
+    csv_path = Path(__file__).parent.parent / "symbol_universes" / "ipo_before_2020_all_fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income.csv"
+    universe_name = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income"
+    
+    print(f"Loading CSV file: {csv_path}")
+    print(f"Universe name: {universe_name}")
+    
+    try:
+        universe_id = load_symbol_universe(
+            data=csv_path,
+            universe_name=universe_name,
+            start_fresh=False  # Set to True if you want to recreate the table
+        )
+        print(f"✅ Successfully loaded universe with ID: {universe_id}")
+    except Exception as e:
+        print(f"❌ Error loading universe: {e}")
+        raise
+
+
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    main()
+    # Uncomment the line below to test loading the IPO universe
+    test_load_ipo_universe()
+    
+    # Original main function for command line usage
+    # main()

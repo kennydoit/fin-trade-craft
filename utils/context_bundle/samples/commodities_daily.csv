@@ -1,0 +1,201 @@
+daily_commodity_id,commodity_name,function_name,date,original_interval,updated_interval,unit,value,name,is_forward_filled,original_date,created_at,updated_at
+109383,Global Commodities Index,ALL_COMMODITIES,2007-12-23,monthly,daily,index 2016=100,147.755432,Global Price Index of All Commodities,True,2007-12-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+117836,Natural Gas,NATURAL_GAS,2004-10-04,daily,daily,dollars per million BTU,5.72,Henry Hub Natural Gas Spot Price,False,2004-10-04,2025-08-03 19:07:53.951915,2025-08-03 19:07:53.951915
+21166,Coffee,COFFEE,1992-05-10,monthly,daily,cents per pound,60.796667,Global Price of Coffee,True,1992-05-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+149185,Wheat,WHEAT,2005-05-15,monthly,daily,dollar per metric ton,119.154462,Global Price of Wheat,True,2005-05-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+38449,Copper,COPPER,1994-01-31,monthly,daily,dollar per metric ton,1807.071367,Global Price of Copper,True,1994-01-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+91511,Crude Oil Brent,BRENT,2019-01-02,daily,daily,dollars per barrel,54.06,Crude Oil Prices Brent,False,2019-01-02,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+64459,Corn,CORN,2019-09-15,monthly,daily,dollar per metric ton,157.374437,Global Price of Corn,True,2019-09-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+137769,Sugar,SUGAR,2019-09-15,monthly,daily,cents per pound,11.158,Global Price of Sugar,True,2019-09-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+47624,Copper,COPPER,2019-03-16,monthly,daily,dollar per metric ton,6439.464286,Global Price of Copper,True,2019-03-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+60325,Corn,CORN,2008-05-21,monthly,daily,dollar per metric ton,243.531774,Global Price of Corn,True,2008-05-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+22799,Coffee,COFFEE,1996-10-29,monthly,daily,cents per pound,123.776957,Global Price of Coffee,True,1996-10-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+32018,Coffee,COFFEE,2022-01-25,monthly,daily,cents per pound,271.081429,Global Price of Coffee,True,2022-01-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+24788,Coffee,COFFEE,2002-04-10,monthly,daily,cents per pound,65.336818,Global Price of Coffee,True,2002-04-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+13003,Aluminum,ALUMINUM,2015-08-07,monthly,daily,dollar per metric ton,1548.125,Global Price of Aluminum,True,2015-08-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+18604,Coffee,COFFEE,1985-05-05,monthly,daily,cents per pound,,Global Price of Coffee,True,1985-05-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+124099,Sugar,SUGAR,1982-04-12,monthly,daily,cents per pound,,Global Price of Sugar,True,1982-04-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+83419,Crude Oil Brent,BRENT,1987-12-28,daily,daily,dollars per barrel,17.0,Crude Oil Prices Brent,False,1987-12-28,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+122211,Natural Gas,NATURAL_GAS,2021-07-12,daily,daily,dollars per million BTU,3.7,Henry Hub Natural Gas Spot Price,False,2021-07-12,2025-08-03 19:07:53.951915,2025-08-03 19:07:53.951915
+77412,Cotton,COTTON,2009-07-30,monthly,daily,cents per pound,64.797826,Global Price of Cotton,True,2009-07-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+131939,Sugar,SUGAR,2003-09-29,monthly,daily,cents per pound,6.271429,Global Price of Sugar,True,2003-09-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+2668,Aluminum,ALUMINUM,1987-04-21,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1987-04-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+126804,Sugar,SUGAR,1989-09-07,monthly,daily,cents per pound,,Global Price of Sugar,True,1989-09-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+1785,Aluminum,ALUMINUM,1984-11-19,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1984-11-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+30793,Coffee,COFFEE,2018-09-18,monthly,daily,cents per pound,121.18,Global Price of Coffee,True,2018-09-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+11497,Aluminum,ALUMINUM,2011-06-23,monthly,daily,dollar per metric ton,2557.761364,Global Price of Aluminum,True,2011-06-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+42207,Copper,COPPER,2004-05-16,monthly,daily,dollar per metric ton,2728.460526,Global Price of Copper,True,2004-05-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+51567,Corn,CORN,1984-05-29,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1984-05-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+100747,Crude Oil WTI,WTI,2014-11-03,daily,daily,dollars per barrel,78.77,Crude Oil Prices WTI,False,2014-11-03,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+57644,Corn,CORN,2001-01-17,monthly,daily,dollar per metric ton,94.297233,Global Price of Corn,True,2001-01-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+57722,Corn,CORN,2001-04-05,monthly,daily,dollar per metric ton,87.545067,Global Price of Corn,True,2001-04-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+36541,Copper,COPPER,1988-11-10,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1988-11-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+44956,Copper,COPPER,2011-11-25,monthly,daily,dollar per metric ton,7581.022727,Global Price of Copper,True,2011-11-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+76712,Cotton,COTTON,2007-08-30,monthly,daily,cents per pound,66.618182,Global Price of Cotton,True,2007-08-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+52629,Corn,CORN,1987-04-26,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1987-04-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+28451,Coffee,COFFEE,2012-04-20,monthly,daily,cents per pound,191.448571,Global Price of Coffee,True,2012-04-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+37768,Copper,COPPER,1992-03-21,monthly,daily,dollar per metric ton,2231.78551,Global Price of Copper,True,1992-03-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+148399,Wheat,WHEAT,2003-03-21,monthly,daily,dollar per metric ton,129.245848,Global Price of Wheat,True,2003-03-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+142525,Wheat,WHEAT,1987-02-19,monthly,daily,dollar per metric ton,,Global Price of Wheat,True,1987-02-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+17921,Coffee,COFFEE,1983-06-22,monthly,daily,cents per pound,,Global Price of Coffee,True,1983-06-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+142488,Wheat,WHEAT,1987-01-13,monthly,daily,dollar per metric ton,,Global Price of Wheat,True,1987-01-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+45330,Copper,COPPER,2012-12-03,monthly,daily,dollar per metric ton,7966.486842,Global Price of Copper,True,2012-12-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+52060,Corn,CORN,1985-10-04,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1985-10-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+35490,Copper,COPPER,1985-12-25,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1985-12-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+59151,Corn,CORN,2005-03-04,monthly,daily,dollar per metric ton,100.014011,Global Price of Corn,True,2005-03-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+155117,Wheat,WHEAT,2021-08-11,monthly,daily,dollar per metric ton,274.87603,Global Price of Wheat,True,2021-08-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+11933,Aluminum,ALUMINUM,2012-09-01,monthly,daily,dollar per metric ton,2064.12,Global Price of Aluminum,False,2012-09-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+96987,Crude Oil WTI,WTI,2000-06-05,daily,daily,dollars per barrel,29.87,Crude Oil Prices WTI,False,2000-06-05,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+78871,Cotton,COTTON,2013-07-28,monthly,daily,cents per pound,92.615217,Global Price of Cotton,True,2013-07-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+109096,Global Commodities Index,ALL_COMMODITIES,2007-03-11,monthly,daily,index 2016=100,119.617206,Global Price Index of All Commodities,True,2007-03-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+20267,Coffee,COFFEE,1989-11-23,monthly,daily,cents per pound,,Global Price of Coffee,True,1989-11-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+48643,Copper,COPPER,2021-12-29,monthly,daily,dollar per metric ton,9551.18,Global Price of Copper,True,2021-12-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+137591,Sugar,SUGAR,2019-03-21,monthly,daily,cents per pound,12.47381,Global Price of Sugar,True,2019-03-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+18662,Coffee,COFFEE,1985-07-02,monthly,daily,cents per pound,,Global Price of Coffee,True,1985-07-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+37075,Copper,COPPER,1990-04-28,monthly,daily,dollar per metric ton,2685.226891,Global Price of Copper,True,1990-04-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+65139,Corn,CORN,2021-07-26,monthly,daily,dollar per metric ton,278.445756,Global Price of Corn,True,2021-07-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+77224,Cotton,COTTON,2009-01-23,monthly,daily,cents per pound,57.695238,Global Price of Cotton,True,2009-01-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+146629,Wheat,WHEAT,1998-05-16,monthly,daily,dollar per metric ton,118.349601,Global Price of Wheat,True,1998-05-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+18582,Coffee,COFFEE,1985-04-13,monthly,daily,cents per pound,,Global Price of Coffee,True,1985-04-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+71968,Cotton,COTTON,1994-09-03,monthly,daily,cents per pound,75.290001,Global Price of Cotton,True,1994-09-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+73522,Cotton,COTTON,1998-12-05,monthly,daily,cents per pound,56.0,Global Price of Cotton,True,1998-12-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+59247,Corn,CORN,2005-06-08,monthly,daily,dollar per metric ton,97.615277,Global Price of Corn,True,2005-06-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+53193,Corn,CORN,1988-11-10,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1988-11-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+65229,Corn,CORN,2021-10-24,monthly,daily,dollar per metric ton,239.602451,Global Price of Corn,True,2021-10-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+114869,Global Commodities Index,ALL_COMMODITIES,2022-12-30,monthly,daily,index 2016=100,194.348353,Global Price Index of All Commodities,True,2022-12-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+45644,Copper,COPPER,2013-10-13,monthly,daily,dollar per metric ton,7203.021739,Global Price of Copper,True,2013-10-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+20855,Coffee,COFFEE,1991-07-04,monthly,daily,cents per pound,82.808258,Global Price of Coffee,True,1991-07-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+74052,Cotton,COTTON,2000-05-18,monthly,daily,cents per pound,60.504762,Global Price of Cotton,True,2000-05-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+53745,Corn,CORN,1990-05-16,monthly,daily,dollar per metric ton,121.254097,Global Price of Corn,True,1990-05-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+36150,Copper,COPPER,1987-10-16,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1987-10-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+144871,Wheat,WHEAT,1993-07-23,monthly,daily,dollar per metric ton,127.5224,Global Price of Wheat,True,1993-07-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+18985,Coffee,COFFEE,1986-05-21,monthly,daily,cents per pound,,Global Price of Coffee,True,1986-05-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+70839,Cotton,COTTON,1991-08-01,monthly,daily,cents per pound,73.470001,Global Price of Cotton,False,1991-08-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+42230,Copper,COPPER,2004-06-08,monthly,daily,dollar per metric ton,2689.045455,Global Price of Copper,True,2004-06-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+96323,Crude Oil WTI,WTI,1997-11-18,daily,daily,dollars per barrel,20.01,Crude Oil Prices WTI,False,1997-11-18,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+34910,Copper,COPPER,1984-05-24,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1984-05-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+81503,Cotton,COTTON,2020-10-11,monthly,daily,cents per pound,74.815909,Global Price of Cotton,True,2020-10-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+58927,Corn,CORN,2004-07-23,monthly,daily,dollar per metric ton,104.494489,Global Price of Corn,True,2004-07-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+33927,Copper,COPPER,1981-09-14,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1981-09-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+131348,Sugar,SUGAR,2002-02-15,monthly,daily,cents per pound,5.683158,Global Price of Sugar,True,2002-02-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+27784,Coffee,COFFEE,2010-06-23,monthly,daily,cents per pound,190.903182,Global Price of Coffee,True,2010-06-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+50481,Corn,CORN,1981-06-08,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1981-06-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+101205,Crude Oil WTI,WTI,2016-08-04,daily,daily,dollars per barrel,41.92,Crude Oil Prices WTI,False,2016-08-04,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+150572,Wheat,WHEAT,2009-03-02,monthly,daily,dollar per metric ton,199.100568,Global Price of Wheat,True,2009-03-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+19479,Coffee,COFFEE,1987-09-27,monthly,daily,cents per pound,,Global Price of Coffee,True,1987-09-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+23876,Coffee,COFFEE,1999-10-11,monthly,daily,cents per pound,92.759048,Global Price of Coffee,True,1999-10-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+116231,Natural Gas,NATURAL_GAS,1998-08-10,daily,daily,dollars per million BTU,1.87,Henry Hub Natural Gas Spot Price,False,1998-08-10,2025-08-03 19:07:53.951915,2025-08-03 19:07:53.951915
+31910,Coffee,COFFEE,2021-10-09,monthly,daily,cents per pound,241.073333,Global Price of Coffee,True,2021-10-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+15174,Aluminum,ALUMINUM,2021-07-17,monthly,daily,dollar per metric ton,2497.635455,Global Price of Aluminum,True,2021-07-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+71378,Cotton,COTTON,1993-01-21,monthly,daily,cents per pound,57.294735,Global Price of Cotton,True,1993-01-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+128953,Sugar,SUGAR,1995-07-27,monthly,daily,cents per pound,13.592381,Global Price of Sugar,True,1995-07-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+150509,Wheat,WHEAT,2008-12-29,monthly,daily,dollar per metric ton,188.84495,Global Price of Wheat,True,2008-12-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+70803,Cotton,COTTON,1991-06-26,monthly,daily,cents per pound,83.839996,Global Price of Cotton,True,1991-06-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+7722,Aluminum,ALUMINUM,2001-02-20,monthly,daily,dollar per metric ton,1607.03,Global Price of Aluminum,True,2001-02-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+58389,Corn,CORN,2003-02-01,monthly,daily,dollar per metric ton,106.14108,Global Price of Corn,False,2003-02-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+120856,Natural Gas,NATURAL_GAS,2016-05-02,daily,daily,dollars per million BTU,1.91,Henry Hub Natural Gas Spot Price,False,2016-05-02,2025-08-03 19:07:53.951915,2025-08-03 19:07:53.951915
+3302,Aluminum,ALUMINUM,1989-01-14,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1989-01-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+73912,Cotton,COTTON,1999-12-30,monthly,daily,cents per pound,44.195238,Global Price of Cotton,True,1999-12-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+9742,Aluminum,ALUMINUM,2006-09-02,monthly,daily,dollar per metric ton,2484.380952,Global Price of Aluminum,True,2006-09-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+22806,Coffee,COFFEE,1996-11-05,monthly,daily,cents per pound,123.91381,Global Price of Coffee,True,1996-11-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+53213,Corn,CORN,1988-11-30,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1988-11-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+104980,Global Commodities Index,ALL_COMMODITIES,1995-12-03,monthly,daily,index 2016=100,,Global Price Index of All Commodities,True,1995-12-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+78916,Cotton,COTTON,2013-09-11,monthly,daily,cents per pound,90.092857,Global Price of Cotton,True,2013-09-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+60483,Corn,CORN,2008-10-26,monthly,daily,dollar per metric ton,183.024703,Global Price of Corn,True,2008-10-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+105604,Global Commodities Index,ALL_COMMODITIES,1997-08-18,monthly,daily,index 2016=100,,Global Price Index of All Commodities,True,1997-08-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+84088,Crude Oil Brent,BRENT,1990-07-20,daily,daily,dollars per barrel,18.0,Crude Oil Prices Brent,False,1990-07-20,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+86566,Crude Oil Brent,BRENT,2000-01-19,daily,daily,dollars per barrel,26.17,Crude Oil Prices Brent,False,2000-01-19,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+153268,Wheat,WHEAT,2016-07-19,monthly,daily,dollar per metric ton,133.710203,Global Price of Wheat,True,2016-07-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+124028,Sugar,SUGAR,1982-01-31,monthly,daily,cents per pound,,Global Price of Sugar,True,1982-01-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+40239,Copper,COPPER,1998-12-26,monthly,daily,dollar per metric ton,1475.763094,Global Price of Copper,True,1998-12-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+6633,Aluminum,ALUMINUM,1998-02-27,monthly,daily,dollar per metric ton,1465.175049,Global Price of Aluminum,True,1998-02-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+115924,Natural Gas,NATURAL_GAS,1997-06-05,daily,daily,dollars per million BTU,2.18,Henry Hub Natural Gas Spot Price,False,1997-06-05,2025-08-03 19:07:53.951915,2025-08-03 19:07:53.951915
+21949,Coffee,COFFEE,1994-07-02,monthly,daily,cents per pound,201.41,Global Price of Coffee,True,1994-07-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+48975,Copper,COPPER,2022-11-26,monthly,daily,dollar per metric ton,8049.861364,Global Price of Copper,True,2022-11-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+70828,Cotton,COTTON,1991-07-21,monthly,daily,cents per pound,81.024994,Global Price of Cotton,True,1991-07-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+126200,Sugar,SUGAR,1988-01-12,monthly,daily,cents per pound,,Global Price of Sugar,True,1988-01-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+19125,Coffee,COFFEE,1986-10-08,monthly,daily,cents per pound,,Global Price of Coffee,True,1986-10-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+104082,Global Commodities Index,ALL_COMMODITIES,1993-06-18,monthly,daily,index 2016=100,,Global Price Index of All Commodities,True,1993-06-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+71599,Cotton,COTTON,1993-08-30,monthly,daily,cents per pound,55.5,Global Price of Cotton,True,1993-08-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+48679,Copper,COPPER,2022-02-03,monthly,daily,dollar per metric ton,9943.175,Global Price of Copper,True,2022-02-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+88876,Crude Oil Brent,BRENT,2008-11-26,daily,daily,dollars per barrel,49.39,Crude Oil Prices Brent,False,2008-11-26,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+21636,Coffee,COFFEE,1993-08-23,monthly,daily,cents per pound,76.187273,Global Price of Coffee,True,1993-08-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+86967,Crude Oil Brent,BRENT,2001-08-02,daily,daily,dollars per barrel,25.49,Crude Oil Prices Brent,False,2001-08-02,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+44345,Copper,COPPER,2010-03-24,monthly,daily,dollar per metric ton,7466.934783,Global Price of Copper,True,2010-03-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+59201,Corn,CORN,2005-04-23,monthly,daily,dollar per metric ton,96.470872,Global Price of Corn,True,2005-04-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+69919,Cotton,COTTON,1989-01-23,monthly,daily,cents per pound,,Global Price of Cotton,True,1989-01-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+40136,Copper,COPPER,1998-09-14,monthly,daily,dollar per metric ton,1646.772692,Global Price of Copper,True,1998-09-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+14548,Aluminum,ALUMINUM,2019-10-30,monthly,daily,dollar per metric ton,1725.956522,Global Price of Aluminum,True,2019-10-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+2293,Aluminum,ALUMINUM,1986-04-11,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1986-04-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+132501,Sugar,SUGAR,2005-04-13,monthly,daily,cents per pound,8.525714,Global Price of Sugar,True,2005-04-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+44021,Copper,COPPER,2009-05-04,monthly,daily,dollar per metric ton,4591.460526,Global Price of Copper,True,2009-05-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+70303,Cotton,COTTON,1990-02-11,monthly,daily,cents per pound,75.959991,Global Price of Cotton,True,1990-02-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+32416,Coffee,COFFEE,2023-02-27,monthly,daily,cents per pound,229.506,Global Price of Coffee,True,2023-02-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+131364,Sugar,SUGAR,2002-03-03,monthly,daily,cents per pound,5.9245,Global Price of Sugar,True,2002-03-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+46269,Copper,COPPER,2015-06-30,monthly,daily,dollar per metric ton,5833.011364,Global Price of Copper,True,2015-06-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+5008,Aluminum,ALUMINUM,1993-09-16,monthly,daily,dollar per metric ton,1116.909058,Global Price of Aluminum,True,1993-09-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+104547,Global Commodities Index,ALL_COMMODITIES,1994-09-26,monthly,daily,index 2016=100,,Global Price Index of All Commodities,True,1994-09-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+97529,Crude Oil WTI,WTI,2002-07-03,daily,daily,dollars per barrel,26.82,Crude Oil Prices WTI,False,2002-07-03,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+70443,Cotton,COTTON,1990-07-01,monthly,daily,cents per pound,91.790009,Global Price of Cotton,False,1990-07-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+108076,Global Commodities Index,ALL_COMMODITIES,2004-05-25,monthly,daily,index 2016=100,79.679261,Global Price Index of All Commodities,True,2004-05-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+81963,Cotton,COTTON,2022-01-14,monthly,daily,cents per pound,132.3325,Global Price of Cotton,True,2022-01-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+130702,Sugar,SUGAR,2000-05-10,monthly,daily,cents per pound,6.78087,Global Price of Sugar,True,2000-05-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+93563,Crude Oil WTI,WTI,1987-04-21,daily,daily,dollars per barrel,18.97,Crude Oil Prices WTI,False,1987-04-21,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+10052,Aluminum,ALUMINUM,2007-07-09,monthly,daily,dollar per metric ton,2738.090909,Global Price of Aluminum,True,2007-07-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+34396,Copper,COPPER,1982-12-27,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1982-12-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+25905,Coffee,COFFEE,2005-05-01,monthly,daily,cents per pound,128.397727,Global Price of Coffee,False,2005-05-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+101155,Crude Oil WTI,WTI,2016-05-26,daily,daily,dollars per barrel,49.0,Crude Oil Prices WTI,False,2016-05-26,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+67165,Cotton,COTTON,1981-07-10,monthly,daily,cents per pound,,Global Price of Cotton,True,1981-07-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+94176,Crude Oil WTI,WTI,1989-08-25,daily,daily,dollars per barrel,18.53,Crude Oil Prices WTI,False,1989-08-25,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+45967,Copper,COPPER,2014-09-01,monthly,daily,dollar per metric ton,6872.215909,Global Price of Copper,False,2014-09-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+106774,Global Commodities Index,ALL_COMMODITIES,2000-10-31,monthly,daily,index 2016=100,,Global Price Index of All Commodities,True,2000-10-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+793,Aluminum,ALUMINUM,1982-03-03,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1982-03-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+65068,Corn,CORN,2021-05-16,monthly,daily,dollar per metric ton,304.29755,Global Price of Corn,True,2021-05-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+71842,Cotton,COTTON,1994-04-30,monthly,daily,cents per pound,83.25,Global Price of Cotton,True,1994-04-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+19361,Coffee,COFFEE,1987-06-01,monthly,daily,cents per pound,,Global Price of Coffee,False,1987-06-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+61270,Corn,CORN,2010-12-22,monthly,daily,dollar per metric ton,250.625551,Global Price of Corn,True,2010-12-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+12,Aluminum,ALUMINUM,1980-01-12,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1980-01-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+112585,Global Commodities Index,ALL_COMMODITIES,2016-09-28,monthly,daily,index 2016=100,103.17944,Global Price Index of All Commodities,True,2016-09-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+44533,Copper,COPPER,2010-09-28,monthly,daily,dollar per metric ton,7729.590909,Global Price of Copper,True,2010-09-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+62552,Corn,CORN,2014-06-26,monthly,daily,dollar per metric ton,202.633823,Global Price of Corn,True,2014-06-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+52132,Corn,CORN,1985-12-15,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1985-12-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+141736,Wheat,WHEAT,1984-12-22,monthly,daily,dollar per metric ton,,Global Price of Wheat,True,1984-12-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+131345,Sugar,SUGAR,2002-02-12,monthly,daily,cents per pound,5.683158,Global Price of Sugar,True,2002-02-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+155819,Wheat,WHEAT,2023-07-14,monthly,daily,dollar per metric ton,278.617601,Global Price of Wheat,True,2023-07-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+58417,Corn,CORN,2003-03-01,monthly,daily,dollar per metric ton,105.131879,Global Price of Corn,False,2003-03-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+81443,Cotton,COTTON,2020-08-12,monthly,daily,cents per pound,70.0,Global Price of Cotton,True,2020-08-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+30246,Coffee,COFFEE,2017-03-20,monthly,daily,cents per pound,160.150435,Global Price of Coffee,True,2017-03-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+115100,Global Commodities Index,ALL_COMMODITIES,2023-08-18,monthly,daily,index 2016=100,161.271623,Global Price Index of All Commodities,True,2023-08-01,2025-08-03 19:07:53.042367,2025-08-03 19:07:53.042367
+50532,Corn,CORN,1981-07-29,monthly,daily,dollar per metric ton,,Global Price of Corn,True,1981-07-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+53820,Corn,CORN,1990-07-30,monthly,daily,dollar per metric ton,114.955193,Global Price of Corn,True,1990-07-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+63398,Corn,CORN,2016-10-19,monthly,daily,dollar per metric ton,152.617444,Global Price of Corn,True,2016-10-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+75827,Cotton,COTTON,2005-03-28,monthly,daily,cents per pound,56.235714,Global Price of Cotton,True,2005-03-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+29815,Coffee,COFFEE,2016-01-14,monthly,daily,cents per pound,145.434762,Global Price of Coffee,True,2016-01-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+35796,Copper,COPPER,1986-10-27,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1986-10-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+91534,Crude Oil Brent,BRENT,2019-02-04,daily,daily,dollars per barrel,62.26,Crude Oil Prices Brent,False,2019-02-04,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+46108,Copper,COPPER,2015-01-20,monthly,daily,dollar per metric ton,5830.535714,Global Price of Copper,True,2015-01-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+136820,Sugar,SUGAR,2017-02-08,monthly,daily,cents per pound,20.405789,Global Price of Sugar,True,2017-02-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+11277,Aluminum,ALUMINUM,2010-11-15,monthly,daily,dollar per metric ton,2324.045455,Global Price of Aluminum,True,2010-11-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+71717,Cotton,COTTON,1993-12-26,monthly,daily,cents per pound,58.735714,Global Price of Cotton,True,1993-12-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+78497,Cotton,COTTON,2012-07-19,monthly,daily,cents per pound,83.968182,Global Price of Cotton,True,2012-07-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+36417,Copper,COPPER,1988-07-09,monthly,daily,dollar per metric ton,,Global Price of Copper,True,1988-07-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+92566,Crude Oil Brent,BRENT,2023-01-18,daily,daily,dollars per barrel,83.78,Crude Oil Prices Brent,False,2023-01-18,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+86212,Crude Oil Brent,BRENT,1998-09-10,daily,daily,dollars per barrel,12.82,Crude Oil Prices Brent,False,1998-09-10,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+139615,Sugar,SUGAR,2024-10-04,monthly,daily,cents per pound,22.355217,Global Price of Sugar,True,2024-10-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+152398,Wheat,WHEAT,2014-03-02,monthly,daily,dollar per metric ton,275.612494,Global Price of Wheat,True,2014-03-01,2025-08-03 19:08:00.588572,2025-08-03 19:08:00.588572
+49478,Copper,COPPER,2024-04-12,monthly,daily,dollar per metric ton,9445.593636,Global Price of Copper,True,2024-04-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+117723,Natural Gas,NATURAL_GAS,2004-04-28,daily,daily,dollars per million BTU,5.8,Henry Hub Natural Gas Spot Price,False,2004-04-28,2025-08-03 19:07:53.951915,2025-08-03 19:07:53.951915
+83761,Crude Oil Brent,BRENT,1989-04-19,daily,daily,dollars per barrel,21.5,Crude Oil Prices Brent,False,1989-04-19,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+3380,Aluminum,ALUMINUM,1989-04-02,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1989-04-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+87480,Crude Oil Brent,BRENT,2003-07-22,daily,daily,dollars per barrel,28.4,Crude Oil Prices Brent,False,2003-07-22,2025-08-03 19:07:49.890140,2025-08-03 19:07:49.890140
+100051,Crude Oil WTI,WTI,2012-03-02,daily,daily,dollars per barrel,106.68,Crude Oil Prices WTI,False,2012-03-02,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+127868,Sugar,SUGAR,1992-08-06,monthly,daily,cents per pound,9.864761,Global Price of Sugar,True,1992-08-01,2025-08-03 19:07:56.961296,2025-08-03 19:07:56.961296
+68459,Cotton,COTTON,1985-01-24,monthly,daily,cents per pound,,Global Price of Cotton,True,1985-01-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+20026,Coffee,COFFEE,1989-03-27,monthly,daily,cents per pound,,Global Price of Coffee,True,1989-03-01,2025-08-03 19:07:37.739547,2025-08-03 19:07:37.739547
+99682,Crude Oil WTI,WTI,2010-10-04,daily,daily,dollars per barrel,81.43,Crude Oil Prices WTI,False,2010-10-04,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+186,Aluminum,ALUMINUM,1980-07-04,monthly,daily,dollar per metric ton,,Global Price of Aluminum,True,1980-07-01,2025-08-03 19:07:31.421935,2025-08-03 19:07:31.421935
+74002,Cotton,COTTON,2000-03-29,monthly,daily,cents per pound,57.304,Global Price of Cotton,True,2000-03-01,2025-08-03 19:07:48.675449,2025-08-03 19:07:48.675449
+103204,Crude Oil WTI,WTI,2024-04-03,daily,daily,dollars per barrel,86.22,Crude Oil Prices WTI,False,2024-04-03,2025-08-03 19:07:50.679578,2025-08-03 19:07:50.679578
+47800,Copper,COPPER,2019-09-08,monthly,daily,dollar per metric ton,5759.25,Global Price of Copper,True,2019-09-01,2025-08-03 19:07:41.373437,2025-08-03 19:07:41.373437
+55458,Corn,CORN,1995-01-23,monthly,daily,dollar per metric ton,106.898773,Global Price of Corn,True,1995-01-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
+66149,Corn,CORN,2024-05-01,monthly,daily,dollar per metric ton,201.019471,Global Price of Corn,False,2024-05-01,2025-08-03 19:07:45.051953,2025-08-03 19:07:45.051953
