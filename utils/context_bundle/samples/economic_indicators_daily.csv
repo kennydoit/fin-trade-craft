@@ -1,0 +1,201 @@
+daily_indicator_id,economic_indicator_name,function_name,maturity,date,original_interval,updated_interval,unit,value,name,is_forward_filled,original_date,created_at,updated_at
+45172,Durable Goods Orders,DURABLES,,2003-03-03,monthly,daily,millions of dollars,188854.0,Manufacturer New Orders: Durable Goods,True,2003-03-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+82533,Inflation Rate,INFLATION,,1968-10-12,monthly,daily,percent,4.271796,Inflation - US Consumer Prices,True,1968-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+164907,Total Nonfarm Payroll,NONFARM_PAYROLL,,1971-12-13,monthly,daily,thousands of persons,72880.0,Total Nonfarm Payroll,True,1971-12-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+37308,Consumer Price Index,CPI,,2015-02-22,monthly,daily,index 1982-1984=100,234.722,Consumer Price Index for all Urban Consumers,True,2015-02-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+265005,Treasury Yield 7 Year,TREASURY_YIELD,7year,2009-05-12,daily,daily,percent,2.67,7-Year Treasury Constant Maturity Rate,False,2009-05-12,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+280865,Unemployment Rate,UNEMPLOYMENT,,1979-11-01,monthly,daily,percent,5.9,Unemployment Rate,False,1979-11-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+162466,Total Nonfarm Payroll,NONFARM_PAYROLL,,1965-04-07,monthly,daily,thousands of persons,59891.0,Total Nonfarm Payroll,True,1965-04-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+17990,Consumer Price Index,CPI,,1962-04-03,monthly,daily,index 1982-1984=100,30.2,Consumer Price Index for all Urban Consumers,True,1962-04-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+273429,Unemployment Rate,UNEMPLOYMENT,,1959-06-23,monthly,daily,percent,5.0,Unemployment Rate,True,1959-06-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+245470,Treasury Yield 5 Year,TREASURY_YIELD,5year,1990-07-27,daily,daily,percent,8.25,5-Year Treasury Constant Maturity Rate,False,1990-07-27,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+288823,Unemployment Rate,UNEMPLOYMENT,,2001-08-15,monthly,daily,percent,4.9,Unemployment Rate,True,2001-08-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+294811,Unemployment Rate,UNEMPLOYMENT,,2018-01-06,monthly,daily,percent,4.0,Unemployment Rate,True,2018-01-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+218851,Treasury Yield 3 Month,TREASURY_YIELD,3month,2000-08-01,daily,daily,percent,6.25,3-Month Treasury Constant Maturity Rate,False,2000-08-01,2025-08-03 20:04:16.088054,2025-08-03 20:04:16.088054
+17084,Consumer Price Index,CPI,,1959-10-10,monthly,daily,index 1982-1984=100,29.4,Consumer Price Index for all Urban Consumers,True,1959-10-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+97124,Inflation Rate,INFLATION,,2008-09-23,monthly,daily,percent,3.8391,Inflation - US Consumer Prices,True,2008-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+279949,Unemployment Rate,UNEMPLOYMENT,,1977-04-29,monthly,daily,percent,7.2,Unemployment Rate,True,1977-04-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+2561,Consumer Price Index,CPI,,1920-01-05,monthly,daily,index 1982-1984=100,19.3,Consumer Price Index for all Urban Consumers,True,1920-01-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+47614,Durable Goods Orders,DURABLES,,2009-11-08,monthly,daily,millions of dollars,151230.0,Manufacturer New Orders: Durable Goods,True,2009-11-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+54712,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1958-03-12,daily,daily,percent,1.25,Effective Federal Funds Rate,False,1958-03-12,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+68407,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1995-09-09,daily,daily,percent,5.67,Effective Federal Funds Rate,False,1995-09-09,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+273018,Unemployment Rate,UNEMPLOYMENT,,1958-05-08,monthly,daily,percent,7.4,Unemployment Rate,True,1958-05-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+241326,Treasury Yield 5 Year,TREASURY_YIELD,5year,1974-09-09,daily,daily,percent,8.49,5-Year Treasury Constant Maturity Rate,False,1974-09-09,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+97071,Inflation Rate,INFLATION,,2008-08-01,monthly,daily,percent,3.8391,Inflation - US Consumer Prices,True,2008-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+257083,Treasury Yield 7 Year,TREASURY_YIELD,7year,1978-12-29,daily,daily,percent,9.23,7-Year Treasury Constant Maturity Rate,False,1978-12-29,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+60722,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1974-08-25,daily,daily,percent,12.07,Effective Federal Funds Rate,False,1974-08-25,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+273784,Unemployment Rate,UNEMPLOYMENT,,1960-06-12,monthly,daily,percent,5.4,Unemployment Rate,True,1960-06-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+169329,Total Nonfarm Payroll,NONFARM_PAYROLL,,1984-01-21,monthly,daily,thousands of persons,91374.0,Total Nonfarm Payroll,True,1984-01-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+175832,Total Nonfarm Payroll,NONFARM_PAYROLL,,2001-11-10,monthly,daily,thousands of persons,132141.0,Total Nonfarm Payroll,True,2001-11-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+135166,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,2010-09-14,quarterly,daily,chained 2012 dollars,54401.0,Real Gross Domestic Product per Capita,True,2010-07-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+76476,Federal Funds Rate,FEDERAL_FUNDS_RATE,,2017-10-12,daily,daily,percent,1.16,Effective Federal Funds Rate,False,2017-10-12,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+185790,Treasury Yield 10 Year,TREASURY_YIELD,10year,1966-12-13,daily,daily,percent,4.86,10-Year Treasury Constant Maturity Rate,False,1966-12-13,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+130047,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1996-09-08,quarterly,daily,chained 2012 dollars,44105.0,Real Gross Domestic Product per Capita,True,1996-07-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+78184,Federal Funds Rate,FEDERAL_FUNDS_RATE,,2022-06-16,daily,daily,percent,1.58,Effective Federal Funds Rate,False,2022-06-16,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+252970,Treasury Yield 5 Year,TREASURY_YIELD,5year,2019-04-26,daily,daily,percent,2.29,5-Year Treasury Constant Maturity Rate,False,2019-04-26,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+157837,Total Nonfarm Payroll,NONFARM_PAYROLL,,1952-08-04,monthly,daily,thousands of persons,49077.0,Total Nonfarm Payroll,True,1952-08-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+66152,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1989-07-07,daily,daily,percent,9.23,Effective Federal Funds Rate,False,1989-07-07,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+242189,Treasury Yield 5 Year,TREASURY_YIELD,5year,1977-12-29,daily,daily,percent,7.58,5-Year Treasury Constant Maturity Rate,False,1977-12-29,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+165892,Total Nonfarm Payroll,NONFARM_PAYROLL,,1974-08-24,monthly,daily,thousands of persons,78584.0,Total Nonfarm Payroll,True,1974-08-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+34739,Consumer Price Index,CPI,,2008-02-10,monthly,daily,index 1982-1984=100,211.693,Consumer Price Index for all Urban Consumers,True,2008-02-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+176657,Total Nonfarm Payroll,NONFARM_PAYROLL,,2004-02-13,monthly,daily,thousands of persons,129320.0,Total Nonfarm Payroll,True,2004-02-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+87399,Inflation Rate,INFLATION,,1982-02-07,monthly,daily,percent,6.131427,Inflation - US Consumer Prices,True,1982-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+235078,Treasury Yield 30 Year,TREASURY_YIELD,30year,2014-04-28,daily,daily,percent,3.47,30-Year Treasury Constant Maturity Rate,False,2014-04-28,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+103180,Inflation Rate,INFLATION,,2025-04-23,monthly,daily,percent,2.949525,Inflation - US Consumer Prices,True,2024-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+160832,Total Nonfarm Payroll,NONFARM_PAYROLL,,1960-10-16,monthly,daily,thousands of persons,54779.0,Total Nonfarm Payroll,True,1960-10-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+258845,Treasury Yield 7 Year,TREASURY_YIELD,7year,1985-10-01,daily,daily,percent,10.13,7-Year Treasury Constant Maturity Rate,False,1985-10-01,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+207622,Treasury Yield 2 Year,TREASURY_YIELD,2year,2001-06-18,daily,daily,percent,3.98,2-Year Treasury Constant Maturity Rate,False,2001-06-18,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+130201,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1997-02-09,quarterly,daily,chained 2012 dollars,44590.0,Real Gross Domestic Product per Capita,True,1997-01-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+162860,Total Nonfarm Payroll,NONFARM_PAYROLL,,1966-05-06,monthly,daily,thousands of persons,63645.0,Total Nonfarm Payroll,True,1966-05-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+108977,Real GDP,REAL_GDP,,2017-08-04,quarterly,daily,billions of dollars,4950.878,Real Gross Domestic Product,True,2017-07-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+296507,Unemployment Rate,UNEMPLOYMENT,,2022-08-29,monthly,daily,percent,3.6,Unemployment Rate,True,2022-08-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+166375,Total Nonfarm Payroll,NONFARM_PAYROLL,,1975-12-20,monthly,daily,thousands of persons,78726.0,Total Nonfarm Payroll,True,1975-12-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+210838,Treasury Yield 2 Year,TREASURY_YIELD,2year,2013-10-15,daily,daily,percent,0.37,2-Year Treasury Constant Maturity Rate,False,2013-10-15,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+37357,Consumer Price Index,CPI,,2015-04-12,monthly,daily,index 1982-1984=100,236.599,Consumer Price Index for all Urban Consumers,True,2015-04-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+111867,Real GDP,REAL_GDP,,2025-07-03,quarterly,daily,billions of dollars,5925.44,Real Gross Domestic Product,True,2025-04-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+85290,Inflation Rate,INFLATION,,1976-04-30,monthly,daily,percent,5.744813,Inflation - US Consumer Prices,True,1976-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+167503,Total Nonfarm Payroll,NONFARM_PAYROLL,,1979-01-21,monthly,daily,thousands of persons,87650.0,Total Nonfarm Payroll,True,1979-01-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+24232,Consumer Price Index,CPI,,1979-05-06,monthly,daily,index 1982-1984=100,71.5,Consumer Price Index for all Urban Consumers,True,1979-05-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+62979,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1980-10-29,daily,daily,percent,13.15,Effective Federal Funds Rate,False,1980-10-29,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+147433,Retail Sales,RETAIL_SALES,,2010-09-12,monthly,daily,millions of dollars,301406.0,Advance Retail Sales: Retail Trade,True,2010-09-01,2025-08-03 20:04:01.850998,2025-08-03 20:04:01.850998
+68803,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1996-10-09,daily,daily,percent,5.43,Effective Federal Funds Rate,False,1996-10-09,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+163410,Total Nonfarm Payroll,NONFARM_PAYROLL,,1967-11-07,monthly,daily,thousands of persons,67210.0,Total Nonfarm Payroll,True,1967-11-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+12364,Consumer Price Index,CPI,,1946-11-07,monthly,daily,index 1982-1984=100,21.3,Consumer Price Index for all Urban Consumers,True,1946-11-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+44218,Durable Goods Orders,DURABLES,,2000-07-22,monthly,daily,millions of dollars,159903.0,Manufacturer New Orders: Durable Goods,True,2000-07-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+169615,Total Nonfarm Payroll,NONFARM_PAYROLL,,1984-11-02,monthly,daily,thousands of persons,96738.0,Total Nonfarm Payroll,True,1984-11-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+64175,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1984-02-07,daily,daily,percent,9.69,Effective Federal Funds Rate,False,1984-02-07,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+42820,Durable Goods Orders,DURABLES,,1996-09-23,monthly,daily,millions of dollars,174797.0,Manufacturer New Orders: Durable Goods,True,1996-09-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+19404,Consumer Price Index,CPI,,1966-02-15,monthly,daily,index 1982-1984=100,32.0,Consumer Price Index for all Urban Consumers,True,1966-02-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+212602,Treasury Yield 2 Year,TREASURY_YIELD,2year,2020-07-20,daily,daily,percent,0.16,2-Year Treasury Constant Maturity Rate,False,2020-07-20,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+172945,Total Nonfarm Payroll,NONFARM_PAYROLL,,1993-12-15,monthly,daily,thousands of persons,113085.0,Total Nonfarm Payroll,True,1993-12-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+254576,Treasury Yield 5 Year,TREASURY_YIELD,5year,2025-06-23,daily,daily,percent,3.91,5-Year Treasury Constant Maturity Rate,False,2025-06-23,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+295269,Unemployment Rate,UNEMPLOYMENT,,2019-04-09,monthly,daily,percent,3.7,Unemployment Rate,True,2019-04-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+193588,Treasury Yield 10 Year,TREASURY_YIELD,10year,1996-11-01,daily,daily,percent,6.38,10-Year Treasury Constant Maturity Rate,False,1996-11-01,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+194725,Treasury Yield 10 Year,TREASURY_YIELD,10year,2001-03-13,daily,daily,percent,4.95,10-Year Treasury Constant Maturity Rate,False,2001-03-13,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+258096,Treasury Yield 7 Year,TREASURY_YIELD,7year,1982-11-17,daily,daily,percent,10.59,7-Year Treasury Constant Maturity Rate,False,1982-11-17,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+267775,Treasury Yield 7 Year,TREASURY_YIELD,7year,2019-12-24,daily,daily,percent,1.83,7-Year Treasury Constant Maturity Rate,False,2019-12-24,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+126066,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1985-10-15,quarterly,daily,chained 2012 dollars,36210.0,Real Gross Domestic Product per Capita,True,1985-10-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+235514,Treasury Yield 30 Year,TREASURY_YIELD,30year,2015-12-29,daily,daily,percent,3.04,30-Year Treasury Constant Maturity Rate,False,2015-12-29,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+111963,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1947-03-06,quarterly,daily,chained 2012 dollars,15248.0,Real Gross Domestic Product per Capita,True,1947-01-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+51974,Durable Goods Orders,DURABLES,,2021-10-16,monthly,daily,millions of dollars,261720.0,Manufacturer New Orders: Durable Goods,True,2021-10-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+45133,Durable Goods Orders,DURABLES,,2003-01-23,monthly,daily,millions of dollars,160196.0,Manufacturer New Orders: Durable Goods,True,2003-01-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+101968,Inflation Rate,INFLATION,,2021-12-28,monthly,daily,percent,4.697859,Inflation - US Consumer Prices,True,2021-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+136113,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,2013-04-18,quarterly,daily,chained 2012 dollars,55914.0,Real Gross Domestic Product per Capita,True,2013-04-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+84823,Inflation Rate,INFLATION,,1975-01-19,monthly,daily,percent,9.143147,Inflation - US Consumer Prices,True,1975-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+37749,Consumer Price Index,CPI,,2016-05-08,monthly,daily,index 1982-1984=100,240.229,Consumer Price Index for all Urban Consumers,True,2016-05-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+230447,Treasury Yield 30 Year,TREASURY_YIELD,30year,1996-07-26,daily,daily,percent,7.02,30-Year Treasury Constant Maturity Rate,False,1996-07-26,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+50123,Durable Goods Orders,DURABLES,,2016-09-21,monthly,daily,millions of dollars,230956.0,Manufacturer New Orders: Durable Goods,True,2016-09-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+286835,Unemployment Rate,UNEMPLOYMENT,,1996-03-06,monthly,daily,percent,5.5,Unemployment Rate,True,1996-03-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+184333,Total Nonfarm Payroll,NONFARM_PAYROLL,,2025-02-18,monthly,daily,thousands of persons,157944.0,Total Nonfarm Payroll,True,2025-02-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+200286,Treasury Yield 10 Year,TREASURY_YIELD,10year,2022-07-06,daily,daily,percent,2.93,10-Year Treasury Constant Maturity Rate,False,2022-07-06,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+80380,Inflation Rate,INFLATION,,1962-11-20,monthly,daily,percent,1.198773,Inflation - US Consumer Prices,True,1962-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+185077,Treasury Yield 10 Year,TREASURY_YIELD,10year,1964-03-19,daily,daily,percent,4.24,10-Year Treasury Constant Maturity Rate,False,1964-03-19,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+68092,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1994-10-29,daily,daily,percent,4.76,Effective Federal Funds Rate,False,1994-10-29,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+216126,Treasury Yield 3 Month,TREASURY_YIELD,3month,1990-02-20,daily,daily,percent,8.06,3-Month Treasury Constant Maturity Rate,False,1990-02-20,2025-08-03 20:04:16.088054,2025-08-03 20:04:16.088054
+103774,Real GDP,REAL_GDP,,2003-05-07,quarterly,daily,billions of dollars,3680.929,Real Gross Domestic Product,True,2003-04-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+201833,Treasury Yield 2 Year,TREASURY_YIELD,2year,1979-04-10,daily,daily,percent,9.81,2-Year Treasury Constant Maturity Rate,False,1979-04-10,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+115141,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1955-11-17,quarterly,daily,chained 2012 dollars,18808.0,Real Gross Domestic Product per Capita,True,1955-10-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+228208,Treasury Yield 30 Year,TREASURY_YIELD,30year,1987-12-28,daily,daily,percent,9.01,30-Year Treasury Constant Maturity Rate,False,1987-12-28,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+148780,Retail Sales,RETAIL_SALES,,2014-05-21,monthly,daily,millions of dollars,400918.0,Advance Retail Sales: Retail Trade,True,2014-05-01,2025-08-03 20:04:01.850998,2025-08-03 20:04:01.850998
+15410,Consumer Price Index,CPI,,1955-03-11,monthly,daily,index 1982-1984=100,26.7,Consumer Price Index for all Urban Consumers,True,1955-03-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+121178,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1972-05-28,quarterly,daily,chained 2012 dollars,27478.0,Real Gross Domestic Product per Capita,True,1972-04-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+267232,Treasury Yield 7 Year,TREASURY_YIELD,7year,2017-11-23,daily,daily,percent,,7-Year Treasury Constant Maturity Rate,False,2017-11-23,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+227333,Treasury Yield 30 Year,TREASURY_YIELD,30year,1984-08-20,daily,daily,percent,12.41,30-Year Treasury Constant Maturity Rate,False,1984-08-20,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+97111,Inflation Rate,INFLATION,,2008-09-10,monthly,daily,percent,3.8391,Inflation - US Consumer Prices,True,2008-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+148978,Retail Sales,RETAIL_SALES,,2014-12-05,monthly,daily,millions of dollars,440713.0,Advance Retail Sales: Retail Trade,True,2014-12-01,2025-08-03 20:04:01.850998,2025-08-03 20:04:01.850998
+115011,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1955-07-10,quarterly,daily,chained 2012 dollars,18787.0,Real Gross Domestic Product per Capita,True,1955-07-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+229635,Treasury Yield 30 Year,TREASURY_YIELD,30year,1993-06-16,daily,daily,percent,6.82,30-Year Treasury Constant Maturity Rate,False,1993-06-16,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+249220,Treasury Yield 5 Year,TREASURY_YIELD,5year,2004-12-10,daily,daily,percent,3.52,5-Year Treasury Constant Maturity Rate,False,2004-12-10,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+146624,Retail Sales,RETAIL_SALES,,2008-06-25,monthly,daily,millions of dollars,333048.0,Advance Retail Sales: Retail Trade,True,2008-06-01,2025-08-03 20:04:01.850998,2025-08-03 20:04:01.850998
+242907,Treasury Yield 5 Year,TREASURY_YIELD,5year,1980-09-30,daily,daily,percent,11.88,5-Year Treasury Constant Maturity Rate,False,1980-09-30,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+178684,Total Nonfarm Payroll,NONFARM_PAYROLL,,2009-09-01,monthly,daily,thousands of persons,130571.0,Total Nonfarm Payroll,False,2009-09-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+70085,Federal Funds Rate,FEDERAL_FUNDS_RATE,,2000-04-13,daily,daily,percent,5.97,Effective Federal Funds Rate,False,2000-04-13,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+230226,Treasury Yield 30 Year,TREASURY_YIELD,30year,1995-09-21,daily,daily,percent,6.56,30-Year Treasury Constant Maturity Rate,False,1995-09-21,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+229838,Treasury Yield 30 Year,TREASURY_YIELD,30year,1994-03-28,daily,daily,percent,6.98,30-Year Treasury Constant Maturity Rate,False,1994-03-28,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+169472,Total Nonfarm Payroll,NONFARM_PAYROLL,,1984-06-12,monthly,daily,thousands of persons,95305.0,Total Nonfarm Payroll,True,1984-06-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+86108,Inflation Rate,INFLATION,,1978-07-27,monthly,daily,percent,7.630964,Inflation - US Consumer Prices,True,1978-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+227041,Treasury Yield 30 Year,TREASURY_YIELD,30year,1983-07-07,daily,daily,percent,11.31,30-Year Treasury Constant Maturity Rate,False,1983-07-07,2025-08-03 20:04:17.117953,2025-08-03 20:04:17.117953
+285230,Unemployment Rate,UNEMPLOYMENT,,1991-10-14,monthly,daily,percent,7.0,Unemployment Rate,True,1991-10-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+179771,Total Nonfarm Payroll,NONFARM_PAYROLL,,2012-08-23,monthly,daily,thousands of persons,134155.0,Total Nonfarm Payroll,True,2012-08-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+97945,Inflation Rate,INFLATION,,2010-12-23,monthly,daily,percent,1.640043,Inflation - US Consumer Prices,True,2010-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+26748,Consumer Price Index,CPI,,1986-03-26,monthly,daily,index 1982-1984=100,108.8,Consumer Price Index for all Urban Consumers,True,1986-03-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+77285,Federal Funds Rate,FEDERAL_FUNDS_RATE,,2019-12-30,daily,daily,percent,1.55,Effective Federal Funds Rate,False,2019-12-30,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+111764,Real GDP,REAL_GDP,,2025-03-22,quarterly,daily,billions of dollars,5746.992,Real Gross Domestic Product,True,2025-01-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+195958,Treasury Yield 10 Year,TREASURY_YIELD,10year,2005-12-02,daily,daily,percent,4.52,10-Year Treasury Constant Maturity Rate,False,2005-12-02,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+203820,Treasury Yield 2 Year,TREASURY_YIELD,2year,1986-11-20,daily,daily,percent,6.26,2-Year Treasury Constant Maturity Rate,False,1986-11-20,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+139176,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,2021-09-06,quarterly,daily,chained 2012 dollars,64850.0,Real Gross Domestic Product per Capita,True,2021-07-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+44751,Durable Goods Orders,DURABLES,,2002-01-06,monthly,daily,millions of dollars,152537.0,Manufacturer New Orders: Durable Goods,True,2002-01-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+36931,Consumer Price Index,CPI,,2014-02-10,monthly,daily,index 1982-1984=100,234.781,Consumer Price Index for all Urban Consumers,True,2014-02-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+270574,Unemployment Rate,UNEMPLOYMENT,,1951-08-29,monthly,daily,percent,3.1,Unemployment Rate,True,1951-08-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+58035,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1967-04-17,daily,daily,percent,4.0,Effective Federal Funds Rate,False,1967-04-17,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+185127,Treasury Yield 10 Year,TREASURY_YIELD,10year,1964-05-28,daily,daily,percent,4.19,10-Year Treasury Constant Maturity Rate,False,1964-05-28,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+30851,Consumer Price Index,CPI,,1997-06-19,monthly,daily,index 1982-1984=100,160.3,Consumer Price Index for all Urban Consumers,True,1997-06-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+199140,Treasury Yield 10 Year,TREASURY_YIELD,10year,2018-02-13,daily,daily,percent,2.83,10-Year Treasury Constant Maturity Rate,False,2018-02-13,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+144396,Retail Sales,RETAIL_SALES,,2002-05-20,monthly,daily,millions of dollars,265320.0,Advance Retail Sales: Retail Trade,True,2002-05-01,2025-08-03 20:04:01.850998,2025-08-03 20:04:01.850998
+61566,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1976-12-16,daily,daily,percent,4.65,Effective Federal Funds Rate,False,1976-12-16,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+141940,Retail Sales,RETAIL_SALES,,1995-08-29,monthly,daily,millions of dollars,188151.0,Advance Retail Sales: Retail Trade,True,1995-08-01,2025-08-03 20:04:01.850998,2025-08-03 20:04:01.850998
+10352,Consumer Price Index,CPI,,1941-05-05,monthly,daily,index 1982-1984=100,14.4,Consumer Price Index for all Urban Consumers,True,1941-05-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+129705,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1995-10-02,quarterly,daily,chained 2012 dollars,43044.0,Real Gross Domestic Product per Capita,True,1995-10-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+56573,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1963-04-16,daily,daily,percent,3.0,Effective Federal Funds Rate,False,1963-04-16,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+23750,Consumer Price Index,CPI,,1978-01-09,monthly,daily,index 1982-1984=100,62.5,Consumer Price Index for all Urban Consumers,True,1978-01-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+11950,Consumer Price Index,CPI,,1945-09-19,monthly,daily,index 1982-1984=100,18.1,Consumer Price Index for all Urban Consumers,True,1945-09-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+47363,Durable Goods Orders,DURABLES,,2009-03-02,monthly,daily,millions of dollars,162107.0,Manufacturer New Orders: Durable Goods,True,2009-03-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+154015,Total Nonfarm Payroll,NONFARM_PAYROLL,,1942-02-16,monthly,daily,thousands of persons,37833.0,Total Nonfarm Payroll,True,1942-02-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+6988,Consumer Price Index,CPI,,1932-02-18,monthly,daily,index 1982-1984=100,14.1,Consumer Price Index for all Urban Consumers,True,1932-02-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+275119,Unemployment Rate,UNEMPLOYMENT,,1964-02-07,monthly,daily,percent,5.4,Unemployment Rate,True,1964-02-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+56726,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1963-09-16,daily,daily,percent,3.5,Effective Federal Funds Rate,False,1963-09-16,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+159000,Total Nonfarm Payroll,NONFARM_PAYROLL,,1955-10-11,monthly,daily,thousands of persons,52021.0,Total Nonfarm Payroll,True,1955-10-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+160780,Total Nonfarm Payroll,NONFARM_PAYROLL,,1960-08-25,monthly,daily,thousands of persons,54610.0,Total Nonfarm Payroll,True,1960-08-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+219893,Treasury Yield 3 Month,TREASURY_YIELD,3month,2004-07-29,daily,daily,percent,1.45,3-Month Treasury Constant Maturity Rate,False,2004-07-29,2025-08-03 20:04:16.088054,2025-08-03 20:04:16.088054
+96243,Inflation Rate,INFLATION,,2006-04-26,monthly,daily,percent,3.225944,Inflation - US Consumer Prices,True,2006-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+31260,Consumer Price Index,CPI,,1998-08-02,monthly,daily,index 1982-1984=100,163.4,Consumer Price Index for all Urban Consumers,True,1998-08-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+212344,Treasury Yield 2 Year,TREASURY_YIELD,2year,2019-07-24,daily,daily,percent,1.83,2-Year Treasury Constant Maturity Rate,False,2019-07-24,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+222344,Treasury Yield 3 Month,TREASURY_YIELD,3month,2013-12-20,daily,daily,percent,0.07,3-Month Treasury Constant Maturity Rate,False,2013-12-20,2025-08-03 20:04:16.088054,2025-08-03 20:04:16.088054
+93406,Inflation Rate,INFLATION,,1998-07-20,monthly,daily,percent,1.552279,Inflation - US Consumer Prices,True,1998-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+208780,Treasury Yield 2 Year,TREASURY_YIELD,2year,2005-11-24,daily,daily,percent,,2-Year Treasury Constant Maturity Rate,False,2005-11-24,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+70767,Federal Funds Rate,FEDERAL_FUNDS_RATE,,2002-02-24,daily,daily,percent,1.71,Effective Federal Funds Rate,False,2002-02-24,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+155679,Total Nonfarm Payroll,NONFARM_PAYROLL,,1946-09-07,monthly,daily,thousands of persons,43176.0,Total Nonfarm Payroll,True,1946-09-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+72670,Federal Funds Rate,FEDERAL_FUNDS_RATE,,2007-05-12,daily,daily,percent,5.27,Effective Federal Funds Rate,False,2007-05-12,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+34038,Consumer Price Index,CPI,,2006-03-11,monthly,daily,index 1982-1984=100,199.8,Consumer Price Index for all Urban Consumers,True,2006-03-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+241988,Treasury Yield 5 Year,TREASURY_YIELD,5year,1977-03-23,daily,daily,percent,6.88,5-Year Treasury Constant Maturity Rate,False,1977-03-23,2025-08-03 20:04:18.232387,2025-08-03 20:04:18.232387
+279181,Unemployment Rate,UNEMPLOYMENT,,1975-03-23,monthly,daily,percent,8.6,Unemployment Rate,True,1975-03-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+187477,Treasury Yield 10 Year,TREASURY_YIELD,10year,1973-05-31,daily,daily,percent,6.93,10-Year Treasury Constant Maturity Rate,False,1973-05-31,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+13956,Consumer Price Index,CPI,,1951-03-18,monthly,daily,index 1982-1984=100,25.8,Consumer Price Index for all Urban Consumers,True,1951-03-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+296044,Unemployment Rate,UNEMPLOYMENT,,2021-05-23,monthly,daily,percent,5.8,Unemployment Rate,True,2021-05-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+175759,Total Nonfarm Payroll,NONFARM_PAYROLL,,2001-08-29,monthly,daily,thousands of persons,131859.0,Total Nonfarm Payroll,True,2001-08-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+183760,Total Nonfarm Payroll,NONFARM_PAYROLL,,2023-07-26,monthly,daily,thousands of persons,155779.0,Total Nonfarm Payroll,True,2023-07-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+217972,Treasury Yield 3 Month,TREASURY_YIELD,3month,1997-03-19,daily,daily,percent,5.29,3-Month Treasury Constant Maturity Rate,False,1997-03-19,2025-08-03 20:04:16.088054,2025-08-03 20:04:16.088054
+219910,Treasury Yield 3 Month,TREASURY_YIELD,3month,2004-08-23,daily,daily,percent,1.54,3-Month Treasury Constant Maturity Rate,False,2004-08-23,2025-08-03 20:04:16.088054,2025-08-03 20:04:16.088054
+185454,Treasury Yield 10 Year,TREASURY_YIELD,10year,1965-08-30,daily,daily,percent,4.27,10-Year Treasury Constant Maturity Rate,False,1965-08-30,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+157094,Total Nonfarm Payroll,NONFARM_PAYROLL,,1950-07-23,monthly,daily,thousands of persons,45272.0,Total Nonfarm Payroll,True,1950-07-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+5392,Consumer Price Index,CPI,,1927-10-06,monthly,daily,index 1982-1984=100,17.4,Consumer Price Index for all Urban Consumers,True,1927-10-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+209083,Treasury Yield 2 Year,TREASURY_YIELD,2year,2007-01-23,daily,daily,percent,4.94,2-Year Treasury Constant Maturity Rate,False,2007-01-23,2025-08-03 20:04:14.933376,2025-08-03 20:04:14.933376
+20442,Consumer Price Index,CPI,,1968-12-19,monthly,daily,index 1982-1984=100,35.5,Consumer Price Index for all Urban Consumers,True,1968-12-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+109373,Real GDP,REAL_GDP,,2018-09-04,quarterly,daily,billions of dollars,5092.532,Real Gross Domestic Product,True,2018-07-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+190019,Treasury Yield 10 Year,TREASURY_YIELD,10year,1983-02-28,daily,daily,percent,10.27,10-Year Treasury Constant Maturity Rate,False,1983-02-28,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+104457,Real GDP,REAL_GDP,,2005-03-20,quarterly,daily,billions of dollars,3867.076,Real Gross Domestic Product,True,2005-01-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+281359,Unemployment Rate,UNEMPLOYMENT,,1981-03-09,monthly,daily,percent,7.4,Unemployment Rate,True,1981-03-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+69248,Federal Funds Rate,FEDERAL_FUNDS_RATE,,1997-12-28,daily,daily,percent,5.19,Effective Federal Funds Rate,False,1997-12-28,2025-08-03 20:03:47.892069,2025-08-03 20:03:47.892069
+285396,Unemployment Rate,UNEMPLOYMENT,,1992-03-28,monthly,daily,percent,7.4,Unemployment Rate,True,1992-03-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+162767,Total Nonfarm Payroll,NONFARM_PAYROLL,,1966-02-02,monthly,daily,thousands of persons,61707.0,Total Nonfarm Payroll,True,1966-02-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+97383,Inflation Rate,INFLATION,,2009-06-09,monthly,daily,percent,-0.355546,Inflation - US Consumer Prices,True,2009-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+290294,Unemployment Rate,UNEMPLOYMENT,,2005-08-25,monthly,daily,percent,4.9,Unemployment Rate,True,2005-08-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+39146,Consumer Price Index,CPI,,2020-03-05,monthly,daily,index 1982-1984=100,258.115,Consumer Price Index for all Urban Consumers,True,2020-03-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+17288,Consumer Price Index,CPI,,1960-05-01,monthly,daily,index 1982-1984=100,29.5,Consumer Price Index for all Urban Consumers,False,1960-05-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+99732,Inflation Rate,INFLATION,,2015-11-14,monthly,daily,percent,0.118627,Inflation - US Consumer Prices,True,2015-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+13417,Consumer Price Index,CPI,,1949-09-25,monthly,daily,index 1982-1984=100,23.9,Consumer Price Index for all Urban Consumers,True,1949-09-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+82955,Inflation Rate,INFLATION,,1969-12-08,monthly,daily,percent,5.462386,Inflation - US Consumer Prices,True,1969-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+177273,Total Nonfarm Payroll,NONFARM_PAYROLL,,2005-10-21,monthly,daily,thousands of persons,135600.0,Total Nonfarm Payroll,True,2005-10-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+96040,Inflation Rate,INFLATION,,2005-10-05,monthly,daily,percent,3.392747,Inflation - US Consumer Prices,True,2005-01-01,2025-08-03 20:03:50.157306,2025-08-03 20:03:50.157306
+199388,Treasury Yield 10 Year,TREASURY_YIELD,10year,2019-01-25,daily,daily,percent,2.76,10-Year Treasury Constant Maturity Rate,False,2019-01-25,2025-08-03 20:04:13.473273,2025-08-03 20:04:13.473273
+180840,Total Nonfarm Payroll,NONFARM_PAYROLL,,2015-07-28,monthly,daily,thousands of persons,141731.0,Total Nonfarm Payroll,True,2015-07-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+154441,Total Nonfarm Payroll,NONFARM_PAYROLL,,1943-04-18,monthly,daily,thousands of persons,42507.0,Total Nonfarm Payroll,True,1943-04-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+106291,Real GDP,REAL_GDP,,2010-03-28,quarterly,daily,billions of dollars,4055.062,Real Gross Domestic Product,True,2010-01-01,2025-08-03 20:03:54.429773,2025-08-03 20:03:54.429773
+27764,Consumer Price Index,CPI,,1989-01-05,monthly,daily,index 1982-1984=100,121.1,Consumer Price Index for all Urban Consumers,True,1989-01-01,2025-08-03 20:03:32.270435,2025-08-03 20:03:32.270435
+50709,Durable Goods Orders,DURABLES,,2018-04-30,monthly,daily,millions of dollars,234565.0,Manufacturer New Orders: Durable Goods,True,2018-04-01,2025-08-03 20:03:45.243763,2025-08-03 20:03:45.243763
+174147,Total Nonfarm Payroll,NONFARM_PAYROLL,,1997-03-31,monthly,daily,thousands of persons,121155.0,Total Nonfarm Payroll,True,1997-03-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+285468,Unemployment Rate,UNEMPLOYMENT,,1992-06-08,monthly,daily,percent,7.8,Unemployment Rate,True,1992-06-01,2025-08-03 20:04:20.989789,2025-08-03 20:04:20.989789
+266704,Treasury Yield 7 Year,TREASURY_YIELD,7year,2015-11-16,daily,daily,percent,2.02,7-Year Treasury Constant Maturity Rate,False,2015-11-16,2025-08-03 20:04:19.705964,2025-08-03 20:04:19.705964
+122781,Real GDP Per Capita,REAL_GDP_PER_CAPITA,,1976-10-17,quarterly,daily,chained 2012 dollars,29469.0,Real Gross Domestic Product per Capita,True,1976-10-01,2025-08-03 20:03:55.995157,2025-08-03 20:03:55.995157
+167359,Total Nonfarm Payroll,NONFARM_PAYROLL,,1978-08-30,monthly,daily,thousands of persons,87305.0,Total Nonfarm Payroll,True,1978-08-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
+172216,Total Nonfarm Payroll,NONFARM_PAYROLL,,1991-12-17,monthly,daily,thousands of persons,109110.0,Total Nonfarm Payroll,True,1991-12-01,2025-08-03 20:04:04.572249,2025-08-03 20:04:04.572249
