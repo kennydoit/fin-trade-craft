@@ -38,7 +38,7 @@ import argparse
 import sys
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -121,7 +121,7 @@ def load_symbol_universe(
         raise ValueError(f"Input data missing required columns: {missing}")
 
     universe_id = uuid.uuid4()
-    load_time = datetime.now(datetime.UTC)
+    load_time = datetime.now(timezone.utc)  # noqa: UP017
 
     db = PostgresDatabaseManager()
     db.connect()
