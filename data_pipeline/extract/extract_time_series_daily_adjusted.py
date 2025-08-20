@@ -560,56 +560,16 @@ class TimeSeriesExtractor:
 def main():
     """Main function to run the time series extraction."""
 
-    # Configuration options for different use cases:
-
-    # Option 1: Initial full historical data collection for stocks (recommended for first run)
-    # extractor_full = TimeSeriesExtractor(output_size="full")
-    # extractor_full.run_etl_incremental(exchange_filter='NYSE', limit=4000)  # Increased for premium tier
-    # extractor_full.run_etl_incremental(
-    #     exchange_filter="NASDAQ", limit=6000
-    # )  # Increased for premium tier
-
-    # Option 2: Extract ETFs specifically 
-    # extractor_etf = TimeSeriesExtractor(output_size="full")
-    # extractor_etf.run_etl_incremental(
-    #     exchange_filter=['NYSE', 'NASDAQ', 'NYSE ARCA', 'BATS'], 
-    #     asset_type_filter='ETF',
-    #     limit=1500  # Start with just 5 ETFs for testing
-    # )
-
-    # Option 2: Extract ETFs specifically 
-    extractor_etf = TimeSeriesExtractor(output_size="full")
-    extractor_etf.run_etl_incremental(
-        exchange_filter=['NYSE ARCA', 'BATS', 'NYSE MKT'], 
-        asset_type_filter='ETF',
-        limit=5000  # Start with just 5 ETFs for testing
+    # Option: Extract both stocks and ETFs
+    # This will pull all records for any stock or ETF in the specified exchanges
+    # that has not already been pulled. So if a new stock or ETF is added to the exchange,
+    # it will be included in the next extraction.
+    extractor_mixed = TimeSeriesExtractor(output_size="full")
+    extractor_mixed.run_etl_incremental(
+        exchange_filter=['NYSE', 'NASDAQ', 'NYSE ARCA', 'BATS'],
+        asset_type_filter=['Stock', 'ETF'],
+        limit=25000
     )
-
-    # Option 3: Extract both stocks and ETFs
-    # extractor_mixed = TimeSeriesExtractor(output_size="full")
-    # extractor_mixed.run_etl_incremental(
-    #     exchange_filter='NASDAQ',
-    #     asset_type_filter=['Stock', 'ETF'],
-    #     limit=500
-    # )
-
-    # Option 4: Daily updates with compact data (for ongoing collection)
-    # extractor_compact = TimeSeriesExtractor(output_size="compact")
-    # extractor_compact.run_etl_incremental(exchange_filter='NASDAQ', limit=10)
-
-    # Option 5: Historical data with date range filtering
-    # extractor_filtered = TimeSeriesExtractor(output_size="full")
-    # extractor_filtered.run_etl_incremental(
-    #     exchange_filter='NASDAQ',
-    #     asset_type_filter='Stock',  # Can specify asset type explicitly
-    #     limit=5,
-    #     start_date='2020-01-01',  # Only data from 2020 onwards
-    #     end_date='2023-12-31'     # Only data until end of 2023
-    # )
-
-    # Option 6: Large batch processing (manage memory with chunks)
-    # extractor_batch = TimeSeriesExtractor(output_size="full")
-    # extractor_batch.run_etl_incremental(exchange_filter='NASDAQ', limit=50)
 
 
 if __name__ == "__main__":

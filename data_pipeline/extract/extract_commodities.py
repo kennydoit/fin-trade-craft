@@ -661,29 +661,10 @@ def main():
 
     # Configuration options for different use cases:
 
-    # === INITIAL DATA COLLECTION ===
-    # Option 1: Test with a few commodities first (recommended for first run)
-    # test_commodities = ['WTI', 'BRENT', 'NATURAL_GAS']
-    # extractor.run_etl_batch(test_commodities, batch_size=2)
-
-    # Option 2: Extract all oil and gas commodities
-    # oil_gas_commodities = ['WTI', 'BRENT', 'NATURAL_GAS']
-    # extractor.run_etl_batch(oil_gas_commodities, batch_size=2)
-
-    # Option 3: Extract all metals commodities
-    # metals_commodities = ['COPPER', 'ALUMINUM']
-    # extractor.run_etl_batch(metals_commodities, batch_size=2)
-
-    # Option 4: Extract all agricultural commodities
-    # agriculture_commodities = ['WHEAT', 'CORN', 'COTTON', 'SUGAR', 'COFFEE']
-    # extractor.run_etl_batch(agriculture_commodities, batch_size=3)
-
-    # Option 5: Extract all commodities (full dataset) and transform to daily
     extractor.run_etl_with_daily_transform()
-    # extractor.run_etl_latest_periods(days_threshold=30, batch_size=3)
 
     print("\nFinal Database Summary:")
-    # Small delay to ensure previous connection is fully closed
+
     time.sleep(0.1)
     extractor.get_database_summary()
 
