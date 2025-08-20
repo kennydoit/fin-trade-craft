@@ -2,7 +2,7 @@
 """Load symbol universes into the transformed schema.
 
 This module creates and appends records to the ``transformed.symbol_universes``
-table. It accepts input data either as a CSV file path or a
+table. It accepts input data either as a CSV file path, a SQL query string, or a
 :class:`pandas.DataFrame`. Two additional columns are automatically generated
 for each load:
 
@@ -84,8 +84,8 @@ def load_symbol_universe(
     Parameters
     ----------
     data:
-        Either a DataFrame or path to a CSV file containing three columns:
-        ``symbol``, ``exchange`` and ``asset_type``.
+        Either a DataFrame, path to a CSV file, or a SQL query string
+        containing three columns: ``symbol``, ``exchange`` and ``asset_type``.
     universe_name:
         Name of the universe to apply to all rows.
     start_fresh:
@@ -99,11 +99,21 @@ def load_symbol_universe(
     """
 
     if isinstance(data, (str | Path)):
-        df = pd.read_csv(data)
+        if Path(str(data)).exists():
+            df = pd.read_csv(str(data))
+        else:
+            db_tmp = PostgresDatabaseManager()
+            db_tmp.connect()
+            try:
+                df = db_tmp.fetch_dataframe(str(data))
+            finally:
+                db_tmp.close()
     elif isinstance(data, pd.DataFrame):
         df = data.copy()
     else:
-        raise TypeError("data must be a pandas DataFrame or path to CSV")
+        raise TypeError(
+            "data must be a pandas DataFrame, path to CSV, or SQL query string"
+        )
 
     required_cols = {"symbol", "exchange", "asset_type"}
     missing = required_cols - set(df.columns)
@@ -157,13 +167,18 @@ def load_symbol_universe(
         db.close()
 
 
-def _parse_args(argv: Iterable[str]) -> tuple[Path, str, bool]:
+def _parse_args(argv: Iterable[str]) -> tuple[Path | None, str | None, str, bool]:
     """Parse command line arguments."""
 
     parser = argparse.ArgumentParser(
-        description="Load symbol universe CSV into transformed.symbol_universes"
+        description="Load symbol universe data into transformed.symbol_universes",
     )
-    parser.add_argument("csv", type=Path, help="CSV file containing symbol data")
+    src_group = parser.add_mutually_exclusive_group(required=True)
+    src_group.add_argument("--csv", type=Path, help="CSV file containing symbol data")
+    src_group.add_argument(
+        "--sql",
+        help="SQL query returning columns symbol, exchange and asset_type",
+    )
     parser.add_argument("--universe-name", required=True, help="Name of the universe")
     parser.add_argument(
         "--start-fresh",
@@ -171,13 +186,18 @@ def _parse_args(argv: Iterable[str]) -> tuple[Path, str, bool]:
         help="Drop and recreate table before loading",
     )
     args = parser.parse_args(list(argv))
-    return args.csv, args.universe_name, args.start_fresh
+    return args.csv, args.sql, args.universe_name, args.start_fresh
 
 
 def main(argv: Iterable[str] | None = None) -> None:
     """Command line entry point."""
-    csv_path, universe_name, start_fresh = _parse_args(argv or sys.argv[1:])
-    load_symbol_universe(csv_path, universe_name, start_fresh=start_fresh)
+    csv_path, sql_query, universe_name, start_fresh = _parse_args(
+        argv or sys.argv[1:]
+    )
+    if csv_path is not None:
+        load_symbol_universe(csv_path, universe_name, start_fresh=start_fresh)
+    else:
+        load_symbol_universe(sql_query, universe_name, start_fresh=start_fresh)
 
 
 def test_load_ipo_universe() -> None:
@@ -201,8 +221,7 @@ def test_load_ipo_universe() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    # Uncomment the line below to test loading the IPO universe
-    test_load_ipo_universe()
-    
-    # Original main function for command line usage
-    # main()
+    # Uncomment the line below to test loading the IPO universe using a CSV file
+    # test_load_ipo_universe()
+
+    main()
