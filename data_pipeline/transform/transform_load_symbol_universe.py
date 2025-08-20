@@ -38,7 +38,7 @@ import argparse
 import sys
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -121,7 +121,7 @@ def load_symbol_universe(
         raise ValueError(f"Input data missing required columns: {missing}")
 
     universe_id = uuid.uuid4()
-    load_time = datetime.now(timezone.utc)
+    load_time = datetime.now(datetime.UTC)
 
     db = PostgresDatabaseManager()
     db.connect()
@@ -191,9 +191,7 @@ def _parse_args(argv: Iterable[str]) -> tuple[Path | None, str | None, str, bool
 
 def main(argv: Iterable[str] | None = None) -> None:
     """Command line entry point."""
-    csv_path, sql_query, universe_name, start_fresh = _parse_args(
-        argv or sys.argv[1:]
-    )
+    csv_path, sql_query, universe_name, start_fresh = _parse_args(argv or sys.argv[1:])
     if csv_path is not None:
         load_symbol_universe(csv_path, universe_name, start_fresh=start_fresh)
     else:
@@ -202,26 +200,79 @@ def main(argv: Iterable[str] | None = None) -> None:
 
 def test_load_ipo_universe() -> None:
     """Test function to load the IPO universe CSV file."""
-    csv_path = Path(__file__).parent.parent / "symbol_universes" / "ipo_before_2020_all_fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income.csv"
-    universe_name = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income"
-    
-    print(f"Loading CSV file: {csv_path}")
-    print(f"Universe name: {universe_name}")
-    
+    csv_path = (
+        Path(__file__).parent.parent
+        / "symbol_universes"
+        / "ipo_before_2020_all_fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income.csv"
+    )
+    universe_name = (
+        "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income"
+    )
+
+    print(f"Loading CSV file: {csv_path}")  # noqa: T201
+    print(f"Universe name: {universe_name}")  # noqa: T201
+
     try:
         universe_id = load_symbol_universe(
             data=csv_path,
             universe_name=universe_name,
-            start_fresh=False  # Set to True if you want to recreate the table
+            start_fresh=False,  # Set to True if you want to recreate the table
         )
-        print(f"✅ Successfully loaded universe with ID: {universe_id}")
+        print(f"✅ Successfully loaded universe with ID: {universe_id}")  # noqa: T201
     except Exception as e:
-        print(f"❌ Error loading universe: {e}")
+        print(f"❌ Error loading universe: {e}")  # noqa: T201
+        raise
+
+
+def test_load_ipo_universe_sql() -> None:
+    """Test function to load the IPO universe using a SQL query."""
+    sql_query = """
+    SELECT symbol, exchange, asset_type
+    FROM transformed.company_master
+    WHERE (ipo_date < '2020-01-01')
+      AND status = 'Active'
+      AND asset_type = 'Stock'
+      AND description IS NOT NULL
+      AND industry IS NOT NULL
+      AND sector IS NOT NULL
+      AND (
+            balance_sheet_count > 5
+            OR income_statement_count > 5
+            OR (
+                cash_flow_count > 5
+                AND earnings_call_transcript_count > 5
+            )
+          )
+      AND time_series_daily_adjusted_count > 500
+      AND symbol IN (
+            SELECT DISTINCT symbol
+            FROM extracted.cash_flow
+            WHERE report_type = 'annual'
+              AND fiscal_date_ending >= '2019-01-01'
+              AND fiscal_date_ending < '2020-01-01'
+              AND net_income >= 1000000000
+      );
+    """
+    universe_name = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income"
+
+    print("Loading SQL query universe")  # noqa: T201
+    print(f"Universe name: {universe_name}")  # noqa: T201
+
+    try:
+        universe_id = load_symbol_universe(
+            data=sql_query,
+            universe_name=universe_name,
+            start_fresh=False,  # Set to True if you want to recreate the table
+        )
+        print(f"✅ Successfully loaded universe with ID: {universe_id}")  # noqa: T201
+    except Exception as e:
+        print(f"❌ Error loading universe: {e}")  # noqa: T201
         raise
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    # Uncomment the line below to test loading the IPO universe using a CSV file
+    # Uncomment one of the lines below to test loading an IPO universe
     # test_load_ipo_universe()
+    # test_load_ipo_universe_sql()
 
     main()
