@@ -401,6 +401,21 @@ CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON earnings_cal
 CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON earnings_call_transcripts(speaker);
 CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON earnings_call_transcripts(sentiment);
 
+-- Drop triggers if they already exist to avoid duplicate-object errors on repeated initialization
+DROP TRIGGER IF EXISTS update_listing_status_updated_at ON listing_status;
+DROP TRIGGER IF EXISTS update_overview_updated_at ON overview;
+DROP TRIGGER IF EXISTS update_time_series_updated_at ON time_series_daily_adjusted;
+DROP TRIGGER IF EXISTS update_income_statement_updated_at ON income_statement;
+DROP TRIGGER IF EXISTS update_balance_sheet_updated_at ON balance_sheet;
+DROP TRIGGER IF EXISTS update_cash_flow_updated_at ON cash_flow;
+DROP TRIGGER IF EXISTS update_commodities_updated_at ON commodities;
+DROP TRIGGER IF EXISTS update_economic_indicators_updated_at ON economic_indicators;
+DROP TRIGGER IF EXISTS update_historical_options_updated_at ON historical_options;
+DROP TRIGGER IF EXISTS update_realtime_options_updated_at ON realtime_options;
+DROP TRIGGER IF EXISTS update_insider_transactions_updated_at ON insider_transactions;
+DROP TRIGGER IF EXISTS update_earnings_call_transcripts_updated_at ON earnings_call_transcripts;
+
+-- Recreate triggers to ensure updated_at is maintained
 CREATE TRIGGER update_listing_status_updated_at BEFORE UPDATE ON listing_status FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_overview_updated_at BEFORE UPDATE ON overview FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_time_series_updated_at BEFORE UPDATE ON time_series_daily_adjusted FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

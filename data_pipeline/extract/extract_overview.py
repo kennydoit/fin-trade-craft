@@ -3,6 +3,7 @@ Extract company overview data from Alpha Vantage API and load into database.
 """
 
 import os
+import argparse
 import sys
 import time
 from datetime import datetime
@@ -35,19 +36,49 @@ class OverviewExtractor:
         # Rate limiting: 75 requests per minute for Alpha Vantage
         self.rate_limit_delay = 1  # seconds between requests
 
-    def load_valid_symbols(self, exchange_filter=None, limit=None):
-        """Load valid stock symbols from the database with their symbol_ids."""
+    def load_valid_symbols(self, exchange_filter=None, limit=None, try_failed: str = "Y"):
+        """Load valid stock symbols from the database with their symbol_ids.
+
+        Args:
+            exchange_filter: Exchange or list of exchanges to include.
+            limit: Optional limit on number of symbols.
+            try_failed: 'Y' or 'N'. When 'N', exclude symbols whose latest
+                overview status is 'fail'. Defaults to 'Y' (include).
+        """
+        if try_failed not in {"Y", "N"}:
+            raise ValueError("try_failed must be 'Y' or 'N'")
+
         with self.db_manager as db:
-            base_query = "SELECT symbol_id, symbol FROM listing_status WHERE asset_type = 'Stock'"
             params = []
+            if try_failed == "N":
+                # Exclude symbols whose latest overview has status='fail'
+                base_query = (
+                    """
+                    SELECT ls.symbol_id, ls.symbol
+                    FROM listing_status ls
+                    LEFT JOIN LATERAL (
+                        SELECT ov.status
+                        FROM overview ov
+                        WHERE ov.symbol_id = ls.symbol_id
+                        ORDER BY ov.updated_at DESC
+                        LIMIT 1
+                    ) latest ON TRUE
+                    WHERE ls.asset_type = 'Stock'
+                      AND (latest.status IS DISTINCT FROM 'fail')
+                    """
+                )
+            else:
+                base_query = (
+                    "SELECT symbol_id, symbol FROM listing_status WHERE asset_type = 'Stock'"
+                )
 
             if exchange_filter:
                 if isinstance(exchange_filter, list):
                     placeholders = ",".join(["%s" for _ in exchange_filter])
-                    base_query += f" AND exchange IN ({placeholders})"
+                    base_query += f" AND ls.exchange IN ({placeholders})" if try_failed == "N" else f" AND exchange IN ({placeholders})"
                     params.extend(exchange_filter)
                 else:
-                    base_query += " AND exchange = %s"
+                    base_query += " AND ls.exchange = %s" if try_failed == "N" else " AND exchange = %s"
                     params.append(exchange_filter)
 
             if limit:
@@ -155,6 +186,21 @@ class OverviewExtractor:
             print("Initializing database schema...")
             db_manager.initialize_schema(schema_path)
 
+        # Ensure the sequence for overview_id is synchronized to avoid PK collisions
+        try:
+            db_manager.execute_query(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence('overview','overview_id'),
+                    COALESCE((SELECT MAX(overview_id) FROM overview), 0) + 1,
+                    false
+                )
+                """
+            )
+        except Exception as e:
+            # Non-fatal: continue even if sequence sync query fails
+            print(f"Sequence sync skipped: {e}")
+
         # Use PostgreSQL upsert functionality
         for record in records:
             # Remove timestamp columns for upsert - they'll be handled by the database
@@ -168,12 +214,16 @@ class OverviewExtractor:
 
     def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet using provided database connection."""
-        base_query = """
-            SELECT ls.symbol_id, ls.symbol 
-            FROM listing_status ls 
-            LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
-            WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL
-        """
+        base_query = (
+            """
+            SELECT ls.symbol_id, ls.symbol
+            FROM listing_status ls
+            WHERE ls.asset_type = 'Stock'
+              AND NOT EXISTS (
+                SELECT 1 FROM overview ov WHERE ov.symbol_id = ls.symbol_id
+              )
+            """
+        )
         params = []
 
         if exchange_filter:
@@ -197,7 +247,7 @@ class OverviewExtractor:
         with self.db_manager as db:
             return self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
 
-    def run_etl(self, exchange_filter=None, limit=None):
+    def run_etl(self, exchange_filter=None, limit=None, try_failed: str = "Y"):
         """Run the complete ETL process for overview data."""
         print("Starting Overview ETL process...")
 
@@ -206,7 +256,7 @@ class OverviewExtractor:
             db_manager = PostgresDatabaseManager()
             with db_manager as db:
                 # Load symbols to process (now returns dict: symbol -> symbol_id)
-                symbol_mapping = self.load_valid_symbols(exchange_filter, limit)
+                symbol_mapping = self.load_valid_symbols(exchange_filter, limit, try_failed=try_failed)
                 symbols = list(symbol_mapping.keys())
                 print(f"Found {len(symbols)} symbols to process")
 
@@ -251,7 +301,7 @@ class OverviewExtractor:
             print(f"Overview ETL process failed: {e}")
             raise
 
-    def run_etl_incremental(self, exchange_filter=None, limit=None):
+    def run_etl_incremental(self, exchange_filter=None, limit=None, try_failed: str = "Y"):
         """Run ETL only for symbols not yet processed."""
         print("Starting Incremental Overview ETL process...")
 
@@ -260,9 +310,7 @@ class OverviewExtractor:
             db_manager = PostgresDatabaseManager()
             with db_manager as db:
                 # Load only unprocessed symbols using the shared connection
-                symbol_mapping = self.load_unprocessed_symbols_with_db(
-                    db, exchange_filter, limit
-                )
+                symbol_mapping = self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
                 symbols = list(symbol_mapping.keys())
                 print(f"Found {len(symbols)} unprocessed symbols")
 
@@ -311,52 +359,96 @@ class OverviewExtractor:
 
 
 def main():
-    """Main function to run the overview extraction."""
+    """Main function to run the overview extraction via CLI."""
+    parser = argparse.ArgumentParser(description="Extract and load Alpha Vantage OVERVIEW data")
+    parser.add_argument(
+        "--mode",
+        choices=["full", "incremental"],
+        default="incremental",
+        help="Run full ETL for all eligible symbols or incremental for unprocessed symbols",
+    )
+    parser.add_argument(
+        "--exchange",
+        action="append",
+        help="Exchange to include (can be specified multiple times). Examples: NYSE, NASDAQ",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Optional limit on number of symbols; omit to apply no limit",
+    )
+    parser.add_argument(
+        "--try-failed",
+        choices=["Y", "N"],
+        default="N",
+        help=(
+            "When N, exclude symbols whose latest overview status is 'fail' (applies to full runs). "
+            "When Y, include them."
+        ),
+    )
+    parser.add_argument(
+        "--force-restart",
+        choices=["Y", "N"],
+        default="N",
+        help=(
+            "When N (default), do not start from scratch—only fetch symbols not already in overview. "
+            "When Y, ignore overview contents and pull all eligible symbols."
+        ),
+    )
+    args = parser.parse_args()
+
     extractor = OverviewExtractor()
 
-    # Configuration options:
-    # Option 1: Small test batch
-    # extractor.run_etl(exchange_filter='NASDAQ', limit=5)
+    exchanges = args.exchange or []
+    if not exchanges:
+        print("No exchanges specified with --exchange; processing all matching symbols")
 
-    # Option 2: Process by exchange in batches
-    # extractor.run_etl(exchange_filter='NASDAQ', limit=100)
-    # extractor.run_etl(exchange_filter='NYSE', limit=100)
+    def _run_for_exchange(ex_val):
+        if args.force_restart == "Y":
+            mode_label = "FULL (force restart)"
+            extractor.run_etl(exchange_filter=ex_val, limit=args.limit, try_failed=args.try_failed)
+        else:
+            mode_label = "INCREMENTAL (new symbols only)"
+            extractor.run_etl_incremental(exchange_filter=ex_val, limit=args.limit, try_failed=args.try_failed)
+        return mode_label
 
-    # Option 3: Process only symbols not yet in overview table
-    print("Processing NYSE symbols...")
-    # extractor.run_etl_incremental(exchange_filter='NYSE', limit=5000)
+    if exchanges:
+        for ex in exchanges:
+            label = _run_for_exchange(ex)
+            print(f"[{label}] Completed for exchange: {ex}")
+    else:
+        label = _run_for_exchange(None)
+        print(f"[{label}] Completed for all exchanges")
 
-    print("Processing NASDAQ symbols...")
-    extractor.run_etl_incremental(exchange_filter="NASDAQ", limit=5000)
-
-    # Check remaining symbols using a separate connection
-    print("Checking remaining symbols...")
-    with PostgresDatabaseManager() as db:
-        remaining_nyse = db.fetch_query(
-            """
-            SELECT COUNT(*) 
-            FROM listing_status ls 
-            LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
-            WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
-            AND ls.exchange = %s
-        """,
-            ("NYSE",),
-        )[0][0]
-
-        remaining_nasdaq = db.fetch_query(
-            """
-            SELECT COUNT(*) 
-            FROM listing_status ls 
-            LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
-            WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
-            AND ls.exchange = %s
-        """,
-            ("NASDAQ",),
-        )[0][0]
-
-        print(f"Remaining NYSE symbols to process: {remaining_nyse}")
-        print(f"Remaining NASDAQ symbols to process: {remaining_nasdaq}")
+    # Optional: quick remaining counts when exchanges provided
+    if exchanges:
+        print("Checking remaining symbols by exchange...")
+        with PostgresDatabaseManager() as db:
+            for ex in exchanges:
+                remaining = db.fetch_query(
+                    """
+                    SELECT COUNT(*) 
+                    FROM listing_status ls 
+                    LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
+                    WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
+                    AND ls.exchange = %s
+                """,
+                    (ex,),
+                )[0][0]
+                print(f"Remaining {ex} symbols to process: {remaining}")
 
 
 if __name__ == "__main__":
     main()
+
+# -----------------------------------------------------------------------------
+# Example command (PowerShell):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_overview.py \
+#   --mode incremental \
+#   --exchange NYSE \
+#   --exchange NASDAQ \
+#   --limit 10 \
+#   --try-failed N \
+#   --force-restart N
+# -----------------------------------------------------------------------------

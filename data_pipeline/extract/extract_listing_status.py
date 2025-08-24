@@ -273,3 +273,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# -----------------------------------------------------------------------------
+# Example command (PowerShell):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py \
+# -----------------------------------------------------------------------------
