@@ -271,8 +271,14 @@ def test_load_ipo_universe_sql() -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    # Uncomment one of the lines below to test loading an IPO universe
-    # test_load_ipo_universe()
-    # test_load_ipo_universe_sql()
-
-    main()
+    # Behavior:
+    #   * If script is invoked with no CLI args -> run the SQL test loader.
+    #   * If args are provided -> use argparse driven CLI (no test execution).
+    # This prevents the argparse error that occurred after successfully running the
+    # test function and then calling main() without required flags.
+    if len(sys.argv) == 1:
+        # Uncomment to test the CSV-based universe instead of / in addition to SQL
+        # test_load_ipo_universe()
+        test_load_ipo_universe_sql()
+    else:
+        main()
