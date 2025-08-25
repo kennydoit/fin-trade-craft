@@ -81,6 +81,12 @@ class OverviewExtractor:
                     base_query += " AND ls.exchange = %s" if try_failed == "N" else " AND exchange = %s"
                     params.append(exchange_filter)
 
+            # Order by symbol to ensure consistent ordering
+            if try_failed == "N":
+                base_query += " ORDER BY ls.symbol"
+            else:
+                base_query += " ORDER BY symbol"
+
             if limit:
                 base_query += " LIMIT %s"
                 params.append(limit)
@@ -234,6 +240,9 @@ class OverviewExtractor:
             else:
                 base_query += " AND ls.exchange = %s"
                 params.append(exchange_filter)
+
+        # Order by symbol to ensure consistent ordering
+        base_query += " ORDER BY ls.symbol"
 
         if limit:
             base_query += " LIMIT %s"

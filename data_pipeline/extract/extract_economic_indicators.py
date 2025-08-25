@@ -530,17 +530,49 @@ class EconomicIndicatorsExtractor:
             try:
                 print(f"Processing {indicator_name} ({function_name}, maturity: {maturity})...")
                 
-                check_query = """
-                    SELECT COUNT(*) FROM extracted.economic_indicators_daily
-                    WHERE economic_indicator_name = %s AND function_name = %s
-                    AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+                # Check if we need to update - compare max dates between main and daily tables
+                compare_query = """
+                    SELECT 
+                        COALESCE(MAX(main.date), '1900-01-01'::date) as main_max_date,
+                        COALESCE(MAX(daily.original_date), '1900-01-01'::date) as daily_max_date,
+                        COUNT(daily.*) as daily_count
+                    FROM (
+                        SELECT date FROM extracted.economic_indicators 
+                        WHERE economic_indicator_name = %s AND function_name = %s
+                        AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+                        AND api_response_status = 'data' AND date IS NOT NULL
+                    ) main
+                    FULL OUTER JOIN (
+                        SELECT original_date FROM extracted.economic_indicators_daily
+                        WHERE economic_indicator_name = %s AND function_name = %s
+                        AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+                    ) daily ON main.date = daily.original_date;
                 """
-                existing_count = db.fetch_query(
-                    check_query, (indicator_name, function_name, maturity, maturity)
-                )[0][0]
-                if existing_count > 0:
-                    print(f"  Skipping {indicator_name} - already exists")
+                
+                compare_result = db.fetch_query(
+                    compare_query, 
+                    (indicator_name, function_name, maturity, maturity,
+                     indicator_name, function_name, maturity, maturity)
+                )[0]
+                
+                main_max_date, daily_max_date, daily_count = compare_result
+                
+                # Skip only if daily table has same or newer data
+                if daily_count > 0 and daily_max_date >= main_max_date:
+                    print(f"  Skipping {indicator_name} - daily table is current (main: {main_max_date}, daily: {daily_max_date})")
                     continue
+                elif daily_count > 0:
+                    print(f"  Updating {indicator_name} - new data available (main: {main_max_date}, daily: {daily_max_date})")
+                    # Delete existing data for this indicator to refresh it
+                    delete_query = """
+                        DELETE FROM extracted.economic_indicators_daily
+                        WHERE economic_indicator_name = %s AND function_name = %s
+                        AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
+                    """
+                    db.execute_query(delete_query, (indicator_name, function_name, maturity, maturity))
+                    print(f"  Deleted {daily_count} existing daily records for refresh")
+                else:
+                    print(f"  New indicator {indicator_name} - creating daily data")
                 
                 # Sort by date and prepare for transformation
                 group = group.sort_values('date')
