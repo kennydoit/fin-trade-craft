@@ -4,7 +4,7 @@
 
 universe: IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income
 
-folder: IPO2020_500Mto1B_{timestamp}
+folder: IPO2020_500Mto1B_20250821T202532Z
 
 collection_dates:
   start_date: '2020-01-01'
