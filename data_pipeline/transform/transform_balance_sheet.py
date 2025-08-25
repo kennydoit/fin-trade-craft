@@ -170,16 +170,22 @@ class BalanceSheetTransformer:
         return df
 
     def _merge_price_features(self, bs_df: pd.DataFrame, price_df: pd.DataFrame) -> pd.DataFrame:
+        bs_df = bs_df.copy()
+        price_df = price_df.copy()
+        bs_df['fiscal_date_ending'] = pd.to_datetime(bs_df['fiscal_date_ending'])
+        price_df['date'] = pd.to_datetime(price_df['date'])
         price_df = price_df.sort_values(['symbol', 'date'])
         price_df['return'] = price_df.groupby('symbol')['adjusted_close'].pct_change()
-        price_df['volatility_30d'] = price_df.groupby('symbol')['return'].rolling(30).std().reset_index(level=0, drop=True)
+        price_df['volatility_30d'] = (
+            price_df.groupby('symbol')['return'].rolling(30).std().reset_index(level=0, drop=True)
+        )
         merged = pd.merge_asof(
-            bs_df.sort_values('fiscal_date_ending'),
-            price_df.sort_values('date'),
+            bs_df.sort_values(['symbol', 'fiscal_date_ending']),
+            price_df.sort_values(['symbol', 'date']),
             left_on='fiscal_date_ending',
             right_on='date',
             by='symbol',
-            direction='backward'
+            direction='backward',
         )
         merged['market_cap'] = merged['common_stock_shares_outstanding'] * merged['adjusted_close']
         merged['price_to_book'] = merged['market_cap'] / merged['total_shareholder_equity']
