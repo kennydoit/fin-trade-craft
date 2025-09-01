@@ -207,16 +207,44 @@ class OverviewExtractor:
             # Non-fatal: continue even if sequence sync query fails
             print(f"Sequence sync skipped: {e}")
 
-        # Use PostgreSQL upsert functionality
+        # Use direct SQL INSERT (remove problematic ON CONFLICT)
+        if not records:
+            print("No records to load")
+            return
+
+        # Get the first record to determine columns
+        first_record = records[0]
+        columns = [col for col in first_record.keys() if col not in ['created_at', 'updated_at']]
+        
+        # Build the INSERT query
+        placeholders = ", ".join(["%s" for _ in columns])
+        
+        insert_query = f"""
+            INSERT INTO overview ({', '.join(columns)}, created_at, updated_at) 
+            VALUES ({placeholders}, NOW(), NOW())
+        """
+        
+        # Prepare record values (excluding timestamp columns)
+        record_values = []
         for record in records:
-            # Remove timestamp columns for upsert - they'll be handled by the database
-            data_dict = record.copy()
-            data_dict.pop("created_at", None)
-            data_dict.pop("updated_at", None)
-
-            db_manager.upsert_data("overview", data_dict, ["symbol_id"])
-
-        print(f"Successfully loaded {len(records)} records into overview table")
+            values = [record[col] for col in columns]
+            record_values.append(tuple(values))
+        
+        # Execute the insert
+        try:
+            with db_manager.connection.cursor() as cursor:
+                cursor.executemany(insert_query, record_values)
+                db_manager.connection.commit()
+                rows_affected = cursor.rowcount
+                
+            print(f"Successfully loaded {rows_affected} records into overview table")
+            
+        except Exception as e:
+            db_manager.connection.rollback()
+            if "duplicate key" in str(e).lower():
+                print(f"Duplicate key detected, skipping")
+            else:
+                raise Exception(f"Database error loading overview records: {str(e)}")
 
     def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
         """Load symbols that haven't been processed yet using provided database connection."""
