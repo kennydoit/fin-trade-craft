@@ -161,6 +161,24 @@ class PostgresDatabaseManager:
         finally:
             cursor.close()
 
+    def execute_script(self, sql_script):
+        """Execute a SQL script string."""
+        if not self.connection:
+            raise Exception("Database connection is not established.")
+
+        cursor = self.connection.cursor()
+        try:
+            # Execute the entire script as one transaction
+            cursor.execute(sql_script)
+            self.connection.commit()
+            print(f"SQL script executed successfully")
+
+        except psycopg2.Error as e:
+            self.connection.rollback()
+            raise Exception(f"Script execution failed: {e}")
+        finally:
+            cursor.close()
+
     def table_exists(self, table_name):
         """Check if a table exists in the database.
         

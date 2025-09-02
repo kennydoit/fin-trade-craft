@@ -1,21 +1,28 @@
 """
-Extract cash flow data from Alpha Vantage API and load into database.
+Cash Flow Extractor using incremental ETL architecture.
+Uses source schema, watermarks, and deterministic processing.
 """
 
 import os
 import sys
 import time
+import json
+import argparse
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Any, Optional
 
 import requests
 from dotenv import load_dotenv
 
-# Add the parent directories to the path so we can import from db
+# Add the parent directories to the path so we can import from db and utils
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
 
+# API configuration
 STOCK_API_FUNCTION = "CASH_FLOW"
+API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
 # Schema-driven field mapping configuration
 CASH_FLOW_FIELDS = {
@@ -49,392 +56,496 @@ CASH_FLOW_FIELDS = {
     'proceeds_from_repurchase_of_equity': 'proceedsFromRepurchaseOfEquity',
     'proceeds_from_sale_of_treasury_stock': 'proceedsFromSaleOfTreasuryStock',
     'change_in_cash_and_cash_equivalents': 'changeInCashAndCashEquivalents',
-    'change_in_exchange_rate': 'changeInExchangeRate',
-    'net_income': 'netIncome',
-    'api_response_status': 'api_response_status',
-    'created_at': 'created_at',
-    'updated_at': 'updated_at'
 }
 
 
 class CashFlowExtractor:
-    """Extract and load cash flow data from Alpha Vantage API."""
-
+    """Cash flow extractor with incremental processing."""
+    
     def __init__(self):
-        # Load ALPHAVANTAGE_API_KEY from .env file
+        """Initialize the extractor."""
         load_dotenv()
         self.api_key = os.getenv("ALPHAVANTAGE_API_KEY")
-
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
-
-        self.base_url = "https://www.alphavantage.co/query"
-        # Rate limiting: 75 requests per minute for Alpha Vantage Premium
-        self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
+        
+        self.table_name = "cash_flow"
+        self.schema_name = "source"
+        self.db_manager = None
+        self.watermark_manager = None
     
     def _get_db_manager(self):
-        """Create a fresh database manager instance for each use."""
-        return PostgresDatabaseManager()
-
-    def load_symbols(self, limit=None):
-        """Load symbols that haven't been processed yet (not in cash_flow table)."""
-        with self._get_db_manager() as db:
-            # First ensure the table exists - create if needed (idempotent operation)
-            self._create_cash_flow_table(db)
-
-            # Now we can safely query with LEFT JOIN to find unprocessed symbols
-            base_query = """
-                SELECT ls.symbol_id, ls.symbol 
-                FROM listing_status ls 
-                LEFT JOIN extracted.cash_flow cf ON ls.symbol_id = cf.symbol_id 
-                WHERE ls.asset_type = 'Stock' AND cf.symbol_id IS NULL
-                GROUP BY ls.symbol_id, ls.symbol
-            """
-            params = []
-
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
-
-    def _extract_api_data(self, symbol):
-        """Extract cash flow data for a single symbol from Alpha Vantage API."""
-        print(f"Processing TICKER: {symbol}")
-
-        url = f"{self.base_url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}"
-        print(f"Fetching data from: {url}")
-
+        """Get database manager with context management."""
+        if not self.db_manager:
+            self.db_manager = PostgresDatabaseManager()
+        return self.db_manager
+    
+    def _initialize_watermark_manager(self, db):
+        """Initialize watermark manager with database connection."""
+        if not self.watermark_manager:
+            self.watermark_manager = WatermarkManager(db)
+        return self.watermark_manager
+    
+    def _ensure_schema_exists(self, db):
+        """Ensure the source schema and tables exist."""
         try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
-
-            # Validate API response
-            if not self._validate_api_response(data, symbol):
-                return None, "fail"
-
-            print(f"Successfully fetched cash flow data for {symbol}")
-            return data, "pass"
-
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching data for {symbol}: {e}")
-            return None, "fail"
+            # Read and execute the source schema
+            schema_file = Path(__file__).parent.parent.parent / "db" / "schema" / "source_schema.sql"
+            if schema_file.exists():
+                with open(schema_file, 'r') as f:
+                    schema_sql = f.read()
+                db.execute_script(schema_sql)
+                print(f"✅ Source schema initialized")
+            else:
+                print(f"⚠️ Schema file not found: {schema_file}")
         except Exception as e:
-            print(f"Unexpected error for {symbol}: {e}")
-            return None, "fail"
-
-    def _validate_api_response(self, data, symbol):
-        """Validate API response for errors and data availability."""
-        # Check for API errors
-        if "Error Message" in data:
-            print(f"API Error for {symbol}: {data['Error Message']}")
-            return False
-
-        if "Note" in data:
-            print(f"API Note for {symbol}: {data['Note']}")
-            return False
-
-        # Check if we have cash flow data
-        if "annualReports" not in data and "quarterlyReports" not in data:
-            print(f"No cash flow data found for {symbol}")
-            return False
-
-        return True
-
-    def _transform_data(self, symbol, symbol_id, data, status):
-        """Transform cash flow data to match database schema."""
-        current_timestamp = datetime.now().isoformat()
-
-        if status == "fail" or data is None:
-            # Create error records for both annual and quarterly
-            records = [
-                self._create_base_record(symbol, symbol_id, "annual", "error", current_timestamp),
-                self._create_base_record(symbol, symbol_id, "quarterly", "error", current_timestamp)
-            ]
-            print(f"Created {len(records)} error records for {symbol}")
-            return records
-
-        try:
-            records = []
-
-            # Process annual reports
-            if "annualReports" in data:
-                if data["annualReports"]:  # Has data
-                    for report in data["annualReports"]:
-                        record = self._transform_single_report(
-                            symbol, symbol_id, report, "annual", current_timestamp
-                        )
-                        if record:
-                            records.append(record)
-                else:  # Empty array
-                    records.append(self._create_base_record(
-                        symbol, symbol_id, "annual", "empty", current_timestamp
-                    ))
-
-            # Process quarterly reports
-            if "quarterlyReports" in data:
-                if data["quarterlyReports"]:  # Has data
-                    for report in data["quarterlyReports"]:
-                        record = self._transform_single_report(
-                            symbol, symbol_id, report, "quarterly", current_timestamp
-                        )
-                        if record:
-                            records.append(record)
-                else:  # Empty array
-                    records.append(self._create_base_record(
-                        symbol, symbol_id, "quarterly", "empty", current_timestamp
-                    ))
-
-            print(f"Transformed {len(records)} cash flow records for {symbol}")
-            return records
-
-        except Exception as e:
-            print(f"Error transforming data for {symbol}: {e}")
-            return []
-
-    def _create_base_record(self, symbol, symbol_id, report_type, api_status, timestamp):
-        """Create a base record with all required fields."""
-        record = {}
+            print(f"⚠️ Schema initialization error: {e}")
+    
+    def _fetch_api_data(self, symbol: str) -> tuple[Dict[str, Any], str]:
+        """
+        Fetch cash flow data from Alpha Vantage API.
         
-        # Populate all fields with None initially
-        for db_field in CASH_FLOW_FIELDS.keys():
-            record[db_field] = None
-        
-        # Set the known values
-        record.update({
-            "symbol_id": symbol_id,
-            "symbol": symbol,
-            "report_type": report_type,
-            "api_response_status": api_status,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-        })
-        
-        return record
-
-    def _transform_single_report(self, symbol, symbol_id, report, report_type, timestamp):
-        """Transform a single cash flow report using schema-driven field mapping."""
-        try:
-            # Start with a base record
-            record = self._create_base_record(symbol, symbol_id, report_type, "pass", timestamp)
+        Args:
+            symbol: Stock symbol to fetch
             
-            # Helper function to convert API values to database format
+        Returns:
+            Tuple of (api_response, status)
+        """
+        url = f"https://www.alphavantage.co/query"
+        params = {
+            "function": STOCK_API_FUNCTION,
+            "symbol": symbol,
+            "apikey": self.api_key
+        }
+        
+        try:
+            print(f"Fetching data from: {url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}")
+            response = requests.get(url, params=params, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Check for API errors
+            if "Error Message" in data:
+                return data, "error"
+            elif "Note" in data:
+                return data, "rate_limited"
+            elif not data or len(data) == 0:
+                return data, "empty"
+            else:
+                return data, "success"
+                
+        except Exception as e:
+            print(f"API request failed for {symbol}: {e}")
+            return {"error": str(e)}, "error"
+    
+    def _store_landing_record(self, db, symbol: str, symbol_id: int, 
+                            api_response: Dict[str, Any], status: str, run_id: str) -> str:
+        """
+        Store raw API response in landing table.
+        
+        Args:
+            db: Database manager
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            api_response: Raw API response
+            status: Response status
+            run_id: Unique run ID
+            
+        Returns:
+            Content hash of the response
+        """
+        content_hash = ContentHasher.calculate_api_response_hash(api_response)
+        
+        insert_query = """
+            INSERT INTO source.api_responses_landing 
+            (table_name, symbol, symbol_id, api_function, api_response, 
+             content_hash, source_run_id, response_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        db.execute_query(insert_query, (
+            self.table_name, symbol, symbol_id, STOCK_API_FUNCTION,
+            json.dumps(api_response), content_hash, run_id, status
+        ))
+        
+        return content_hash
+    
+    def _transform_data(self, symbol: str, symbol_id: int, api_response: Dict[str, Any], 
+                       run_id: str) -> List[Dict[str, Any]]:
+        """
+        Transform API response to standardized records.
+        
+        Args:
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            api_response: Raw API response
+            run_id: Unique run ID
+            
+        Returns:
+            List of transformed records
+        """
+        records = []
+        
+        # Process quarterly reports
+        quarterly_reports = api_response.get("quarterlyReports", [])
+        for report in quarterly_reports:
+            record = self._transform_single_report(
+                symbol, symbol_id, report, "quarterly", run_id
+            )
+            if record:
+                records.append(record)
+        
+        # Process annual reports
+        annual_reports = api_response.get("annualReports", [])
+        for report in annual_reports:
+            record = self._transform_single_report(
+                symbol, symbol_id, report, "annual", run_id
+            )
+            if record:
+                records.append(record)
+        
+        return records
+    
+    def _transform_single_report(self, symbol: str, symbol_id: int, 
+                                report: Dict[str, Any], report_type: str, 
+                                run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Transform a single cash flow report.
+        
+        Args:
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            report: Single report data
+            report_type: 'quarterly' or 'annual'
+            run_id: Unique run ID
+            
+        Returns:
+            Transformed record or None if invalid
+        """
+        try:
+            # Initialize record with all fields as None
+            record = {field: None for field in CASH_FLOW_FIELDS.keys()}
+            
+            # Set known values
+            record.update({
+                "symbol_id": symbol_id,
+                "symbol": symbol,
+                "report_type": report_type,
+                "api_response_status": "pass",
+                "source_run_id": run_id,
+                "fetched_at": datetime.now()
+            })
+            
+            # Helper function to convert API values
             def convert_value(value):
                 if value is None or value == "None" or value == "":
                     return None
                 try:
-                    return int(float(value))
+                    return float(value)
                 except (ValueError, TypeError):
                     return None
-
-            # Use schema-driven mapping to populate fields
+            
+            # Map API fields to database fields using schema-driven approach
             for db_field, api_field in CASH_FLOW_FIELDS.items():
-                if api_field in ['symbol_id', 'symbol', 'report_type', 'api_response_status', 'created_at', 'updated_at']:
-                    # These are already set in base record
+                if db_field in ["symbol_id", "symbol", "report_type"]:
+                    # These are already set
                     continue
                 elif api_field == 'fiscalDateEnding':
-                    record[db_field] = report.get(api_field)
+                    # Use deterministic date parsing
+                    record[db_field] = DateUtils.parse_fiscal_date(report.get(api_field))
                 elif api_field in report:
                     record[db_field] = convert_value(report.get(api_field))
-
-            # Validate required fields (only for records with data)
-            if record["api_response_status"] == "pass" and not record["fiscal_date_ending"]:
+            
+            # Validate required fields
+            if not record["fiscal_date_ending"]:
                 print(f"Missing fiscal_date_ending for {symbol} {report_type} report")
                 return None
-
+            
+            # Calculate content hash for change detection
+            record["content_hash"] = ContentHasher.calculate_business_content_hash(record)
+            
             return record
-
+            
         except Exception as e:
-            print(f"Error transforming single report for {symbol}: {e}")
+            print(f"Error transforming report for {symbol}: {e}")
             return None
-
-    def _create_cash_flow_table(self, db):
-        """Create the cash_flow table if it doesn't exist."""
-        try:
-            create_table_sql = """
-                CREATE TABLE IF NOT EXISTS extracted.cash_flow (
-                    symbol_id                               INTEGER NOT NULL,
-                    symbol                                  VARCHAR(20) NOT NULL,
-                    fiscal_date_ending                      DATE,  -- Allow NULL for empty/error records
-                    report_type                             VARCHAR(10) NOT NULL CHECK (report_type IN ('annual', 'quarterly')),
-                    reported_currency                       VARCHAR(10),
-                    operating_cashflow                      BIGINT,
-                    payments_for_operating_activities       BIGINT,
-                    proceeds_from_operating_activities      BIGINT,
-                    change_in_operating_liabilities         BIGINT,
-                    change_in_operating_assets              BIGINT,
-                    depreciation_depletion_and_amortization BIGINT,
-                    capital_expenditures                    BIGINT,
-                    change_in_receivables                   BIGINT,
-                    change_in_inventory                     BIGINT,
-                    profit_loss                             BIGINT,
-                    cashflow_from_investment                BIGINT,
-                    cashflow_from_financing                 BIGINT,
-                    proceeds_from_repayments_of_short_term_debt BIGINT,
-                    payments_for_repurchase_of_common_stock BIGINT,
-                    payments_for_repurchase_of_equity       BIGINT,
-                    payments_for_repurchase_of_preferred_stock BIGINT,
-                    dividend_payout                         BIGINT,
-                    dividend_payout_common_stock            BIGINT,
-                    dividend_payout_preferred_stock         BIGINT,
-                    proceeds_from_issuance_of_common_stock  BIGINT,
-                    proceeds_from_issuance_of_long_term_debt_and_capital_securities_net BIGINT,
-                    proceeds_from_issuance_of_preferred_stock BIGINT,
-                    proceeds_from_repurchase_of_equity      BIGINT,
-                    proceeds_from_sale_of_treasury_stock    BIGINT,
-                    change_in_cash_and_cash_equivalents     BIGINT,
-                    change_in_exchange_rate                 BIGINT,
-                    net_income                              BIGINT,
-                    api_response_status                     VARCHAR(20),
-                    created_at                              TIMESTAMP DEFAULT NOW(),
-                    updated_at                              TIMESTAMP DEFAULT NOW(),
-                    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE
-                );
-
-                -- Create indexes for cash flow
-                CREATE INDEX IF NOT EXISTS idx_cash_flow_symbol_id ON extracted.cash_flow(symbol_id);
-                CREATE INDEX IF NOT EXISTS idx_cash_flow_fiscal_date ON extracted.cash_flow(fiscal_date_ending);
-            """
-            db.execute_query(create_table_sql)
-            print("Created extracted.cash_flow table with indexes")
-        except Exception as e:
-            print(f"Warning: Table creation failed, but continuing: {e}")
-            # Continue anyway - table might already exist
-
-    def _load_data_to_db(self, records, db_connection=None):
-        """Load cash flow records into the database."""
-        if not records:
-            print("No records to load")
-            return
-
-        print(f"Loading {len(records)} records into database...")
-
-        # Use provided connection or create new one
-        if db_connection:
-            # Use existing connection
-            db = db_connection
-
-            # Prepare insert query - use simple INSERT since there's no proper unique constraint
-            columns = list(records[0].keys())
-            placeholders = ", ".join(["%s" for _ in columns])
-            insert_query = f"""
-                INSERT INTO extracted.cash_flow ({', '.join(columns)}) 
-                VALUES ({placeholders})
-            """
-
-            # Convert records to list of tuples
-            record_tuples = [
-                tuple(record[col] for col in columns) for record in records
-            ]
-
-            # Execute bulk insert
-            rows_affected = db.execute_many(insert_query, record_tuples)
-            print(f"Successfully loaded {rows_affected} records into extracted.cash_flow table")
-        else:
-            # Create new connection (fallback)
-            with self._get_db_manager() as db:
-                self._load_data_to_db(records, db)
-
-    def run_etl_incremental(self, limit=None):
-        """Run ETL only for symbols not yet processed.
-
-        Args:
-            limit: Maximum number of symbols to process (for chunking)
+    
+    def _content_has_changed(self, db, symbol_id: int, content_hash: str) -> bool:
         """
-        print("Starting Incremental Cash Flow ETL process...")
-        print(f"Configuration: limit={limit}")
-
-        try:
-            # Use a single database connection throughout the entire process
-            with self._get_db_manager() as db:
-                # Ensure the table exists first - create if needed (idempotent operation)
-                self._create_cash_flow_table(db)
-
-                # Load only unprocessed symbols using the simplified method
-                symbol_mapping = self.load_symbols(limit)
-                symbols = list(symbol_mapping.keys())
-                print(f"Found {len(symbols)} unprocessed symbols")
-
-                if not symbols:
-                    print("No unprocessed symbols found")
-                    return
-
-                total_records = 0
-                success_count = 0
-                fail_count = 0
-
-                for i, symbol in enumerate(symbols):
-                    symbol_id = symbol_mapping[symbol]
-
-                    try:
-                        # Extract data for this symbol
-                        data, status = self._extract_api_data(symbol)
-
-                        # Transform data
-                        records = self._transform_data(symbol, symbol_id, data, status)
-
-                        if records:
-                            # Load records for this symbol using the same database connection
-                            self._load_data_to_db(records, db)
-                            total_records += len(records)
-                            success_count += 1
-                            print(
-                                f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{i+1}/{len(symbols)}]"
-                            )
-                        else:
-                            fail_count += 1
-                            print(
-                                f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{i+1}/{len(symbols)}]"
-                            )
-
-                    except Exception as e:
-                        fail_count += 1
-                        print(
-                            f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]"
-                        )
-                        # Continue processing other symbols even if one fails
-                        continue
-
-                    # Rate limiting - wait between requests
-                    if i < len(symbols) - 1:
-                        time.sleep(self.rate_limit_delay)
-
-                # Count remaining unprocessed symbols
-                remaining_symbols = self.load_symbols()
-                remaining_count = len(remaining_symbols)
-
-            # Print summary
-            print("\n" + "=" * 50)
-            print("Incremental Cash Flow ETL Summary:")
-            print(f"  Total symbols processed: {len(symbols)}")
-            print(f"  Successful symbols: {success_count}")
-            print(f"  Failed symbols: {fail_count}")
-            print(f"  Remaining symbols: {remaining_count}")
-            print(f"  Total records loaded: {total_records:,}")
-            print(
-                f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}"
+        Check if content has changed based on hash comparison.
+        
+        Args:
+            db: Database manager
+            symbol_id: Symbol ID
+            content_hash: New content hash
+            
+        Returns:
+            True if content has changed or is new
+        """
+        query = """
+            SELECT COUNT(*) FROM source.cash_flow 
+            WHERE symbol_id = %s AND content_hash = %s
+        """
+        
+        result = db.fetch_query(query, (symbol_id, content_hash))
+        return result[0][0] == 0 if result else True  # True if no matching hash found
+    
+    def _upsert_records(self, db, records: List[Dict[str, Any]]) -> int:
+        """
+        Upsert records into the cash flow table.
+        
+        Args:
+            db: Database manager
+            records: List of records to upsert
+            
+        Returns:
+            Number of rows affected
+        """
+        if not records:
+            return 0
+        
+        # Get column names (excluding auto-generated ones)
+        columns = [col for col in records[0].keys() 
+                  if col not in ['cash_flow_id', 'created_at', 'updated_at']]
+        
+        # Build upsert query
+        placeholders = ", ".join(["%s" for _ in columns])
+        update_columns = [col for col in columns 
+                         if col not in ['symbol_id', 'fiscal_date_ending', 'report_type']]
+        update_set = [f"{col} = EXCLUDED.{col}" for col in update_columns]
+        update_set.append("updated_at = NOW()")
+        
+        upsert_query = f"""
+            INSERT INTO source.cash_flow ({', '.join(columns)}, created_at, updated_at) 
+            VALUES ({placeholders}, NOW(), NOW())
+            ON CONFLICT (symbol_id, fiscal_date_ending, report_type) 
+            DO UPDATE SET {', '.join(update_set)}
+        """
+        
+        # Prepare record values
+        record_values = []
+        for record in records:
+            values = [record[col] for col in columns]
+            record_values.append(tuple(values))
+        
+        # Execute upsert
+        with db.connection.cursor() as cursor:
+            cursor.executemany(upsert_query, record_values)
+            db.connection.commit()
+            return cursor.rowcount
+    
+    def extract_symbol(self, symbol: str, symbol_id: int, db) -> Dict[str, Any]:
+        """
+        Extract cash flow data for a single symbol.
+        
+        Args:
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            db: Database manager (passed from caller)
+            
+        Returns:
+            Processing result summary
+        """
+        run_id = RunIdGenerator.generate()
+        
+        watermark_mgr = self._initialize_watermark_manager(db)
+        
+        # Fetch API data
+        api_response, status = self._fetch_api_data(symbol)
+        
+        # Store in landing table (always)
+        content_hash = self._store_landing_record(
+            db, symbol, symbol_id, api_response, status, run_id
+        )
+        
+        # Process if successful
+        if status == "success":
+            # Check if content has changed
+            if not self._content_has_changed(db, symbol_id, content_hash):
+                print(f"No changes detected for {symbol}, skipping transformation")
+                watermark_mgr.update_watermark(self.table_name, symbol_id, success=True)
+                return {
+                    "symbol": symbol,
+                    "status": "no_changes",
+                    "records_processed": 0,
+                    "run_id": run_id
+                }
+            
+            # Transform data
+            records = self._transform_data(symbol, symbol_id, api_response, run_id)
+            
+            if records:
+                # Upsert records
+                rows_affected = self._upsert_records(db, records)
+                
+                # Update watermark with latest fiscal date
+                latest_fiscal_date = max(
+                    r['fiscal_date_ending'] for r in records 
+                    if r['fiscal_date_ending']
+                )
+                watermark_mgr.update_watermark(
+                    self.table_name, symbol_id, latest_fiscal_date, success=True
+                )
+                
+                return {
+                    "symbol": symbol,
+                    "status": "success",
+                    "records_processed": len(records),
+                    "rows_affected": rows_affected,
+                    "latest_fiscal_date": latest_fiscal_date,
+                    "run_id": run_id
+                }
+            else:
+                # No valid records
+                watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
+                return {
+                    "symbol": symbol,
+                    "status": "no_valid_records",
+                    "records_processed": 0,
+                    "run_id": run_id
+                }
+        else:
+            # API failure
+            watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
+            return {
+                "symbol": symbol,
+                "status": "api_failure",
+                "error": status,
+                "records_processed": 0,
+                "run_id": run_id
+            }
+    
+    def run_incremental_extraction(self, limit: Optional[int] = None, 
+                                 staleness_hours: int = 24) -> Dict[str, Any]:
+        """
+        Run incremental extraction for symbols that need processing.
+        
+        Args:
+            limit: Maximum number of symbols to process
+            staleness_hours: Hours before data is considered stale
+            
+        Returns:
+            Processing summary
+        """
+        print(f"🚀 Starting incremental cash flow extraction...")
+        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}")
+        
+        with self._get_db_manager() as db:
+            # Ensure schema exists
+            self._ensure_schema_exists(db)
+            
+            watermark_mgr = self._initialize_watermark_manager(db)
+            
+            # Get symbols needing processing
+            symbols_to_process = watermark_mgr.get_symbols_needing_processing(
+                self.table_name, staleness_hours=staleness_hours, limit=limit
             )
-            print("=" * 50)
+            
+            print(f"Found {len(symbols_to_process)} symbols needing processing")
+            
+            if not symbols_to_process:
+                print("✅ No symbols need processing")
+                return {
+                    "symbols_processed": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "no_changes": 0,
+                    "total_records": 0
+                }
+            
+            # Process symbols
+            results = {
+                "symbols_processed": 0,
+                "successful": 0,
+                "failed": 0,
+                "no_changes": 0,
+                "total_records": 0,
+                "details": []
+            }
+            
+            for i, symbol_data in enumerate(symbols_to_process, 1):
+                symbol_id = symbol_data["symbol_id"]
+                symbol = symbol_data["symbol"]
+                
+                print(f"Processing {symbol} (ID: {symbol_id}) [{i}/{len(symbols_to_process)}]")
+                
+                # Extract symbol data
+                result = self.extract_symbol(symbol, symbol_id, db)
+                results["details"].append(result)
+                results["symbols_processed"] += 1
+                
+                if result["status"] == "success":
+                    results["successful"] += 1
+                    results["total_records"] += result["records_processed"]
+                    print(f"✅ {symbol}: {result['records_processed']} records processed")
+                elif result["status"] == "no_changes":
+                    results["no_changes"] += 1
+                    print(f"⚪ {symbol}: No changes detected")
+                else:
+                    results["failed"] += 1
+                    print(f"❌ {symbol}: {result['status']}")
+                
+                # Rate limiting
+                if i < len(symbols_to_process):
+                    time.sleep(API_DELAY_SECONDS)
+            
+            print(f"\n🎯 Incremental extraction completed:")
+            print(f"  Symbols processed: {results['symbols_processed']}")
+            print(f"  Successful: {results['successful']}")
+            print(f"  No changes: {results['no_changes']}")
+            print(f"  Failed: {results['failed']}")
+            print(f"  Total records: {results['total_records']}")
+            
+            return results
 
-            print("Incremental Cash Flow ETL process completed successfully!")
-
-        except Exception as e:
-            print(f"Incremental Cash Flow ETL process failed: {e}")
-            raise
 
 def main():
-    """Main function to run the cash flow extraction."""
-
+    """Main execution function."""
+    parser = argparse.ArgumentParser(description="Cash Flow Extractor")
+    parser.add_argument("--limit", type=int, help="Maximum number of symbols to process")
+    parser.add_argument("--staleness-hours", type=int, default=24, 
+                       help="Hours before data is considered stale (default: 24)")
+    
+    args = parser.parse_args()
+    
     extractor = CashFlowExtractor()
+    result = extractor.run_incremental_extraction(
+        limit=args.limit,
+        staleness_hours=args.staleness_hours
+    )
+    
+    # Exit with appropriate code
+    if result["failed"] > 0 and result["successful"] == 0:
+        sys.exit(1)  # All failed
+    else:
+        sys.exit(0)  # Some or all successful
 
-    # Simplified configuration - no exchange filtering
-    try:
-        extractor.run_etl_incremental(limit=25000)
-    except Exception as e:
-        print(f"Error in main execution: {e}")
-        raise
 
 if __name__ == "__main__":
     main()
+
+# -----------------------------------------------------------------------------
+# Example commands (PowerShell):
+# 
+# Basic incremental extraction (process up to 50 symbols, 24-hour staleness):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --limit 50
+#
+# Process only 10 symbols (useful for testing):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --limit 10
+#
+# Aggressive refresh (1-hour staleness, process 25 symbols):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --limit 25 --staleness-hours 1
+#
+# Weekly batch processing (7-day staleness, no limit):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --staleness-hours 168
+#
+# Large batch processing (process 100 symbols, 24-hour staleness):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --limit 100 --staleness-hours 24
+#
+# Force refresh of recent data (6-hour staleness, 50 symbols):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --limit 50 --staleness-hours 6
+#
+# Process unprocessed symbols only (very long staleness period):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_cash_flow.py --limit 25 --staleness-hours 8760
+# -----------------------------------------------------------------------------
