@@ -1,25 +1,32 @@
 """
-Extract balance sheet data from Alpha Vantage API and load into database.
-Streamlined version with consolidated logic and reduced redundancy.
+Balance Sheet Extractor using incremental ETL architecture.
+Uses source schema, watermarks, and deterministic processing.
 """
 
 import os
 import sys
 import time
+import json
+import argparse
 from datetime import datetime
 from pathlib import Path
+from typing import Dict, List, Any, Optional
 
 import requests
 from dotenv import load_dotenv
 
-# Add the parent directories to the path so we can import from db
+# Add the parent directories to the path so we can import from db and utils
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
 
+# API configuration
 STOCK_API_FUNCTION = "BALANCE_SHEET"
+API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
-# Schema configuration for balance sheet fields
+# Schema-driven field mapping configuration
 BALANCE_SHEET_FIELDS = {
+    # Asset fields
     'total_assets': 'totalAssets',
     'total_current_assets': 'totalCurrentAssets',
     'cash_and_cash_equivalents_at_carrying_value': 'cashAndCashEquivalentsAtCarryingValue',
@@ -37,6 +44,8 @@ BALANCE_SHEET_FIELDS = {
     'short_term_investments': 'shortTermInvestments',
     'other_current_assets': 'otherCurrentAssets',
     'other_non_current_assets': 'otherNonCurrentAssets',
+    
+    # Liability fields
     'total_liabilities': 'totalLiabilities',
     'total_current_liabilities': 'totalCurrentLiabilities',
     'current_accounts_payable': 'currentAccountsPayable',
@@ -51,353 +60,507 @@ BALANCE_SHEET_FIELDS = {
     'short_long_term_debt_total': 'shortLongTermDebtTotal',
     'other_current_liabilities': 'otherCurrentLiabilities',
     'other_non_current_liabilities': 'otherNonCurrentLiabilities',
+    
+    # Equity fields
     'total_shareholder_equity': 'totalShareholderEquity',
     'treasury_stock': 'treasuryStock',
     'retained_earnings': 'retainedEarnings',
     'common_stock': 'commonStock',
-    'common_stock_shares_outstanding': 'commonStockSharesOutstanding'
+    'common_stock_shares_outstanding': 'commonStockSharesOutstanding',
 }
 
 
 class BalanceSheetExtractor:
-    """Extract and load balance sheet data from Alpha Vantage API."""
-
+    """Balance sheet extractor with incremental processing."""
+    
     def __init__(self):
+        """Initialize the extractor."""
         load_dotenv()
         self.api_key = os.getenv("ALPHAVANTAGE_API_KEY")
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
-        self.base_url = "https://www.alphavantage.co/query"
-        self.rate_limit_delay = 0.8  # 75 requests per minute
-        
+        self.table_name = "balance_sheet"
+        self.schema_name = "source"
+        self.db_manager = None
+        self.watermark_manager = None
+    
     def _get_db_manager(self):
-        """Create a fresh database manager instance for each operation to avoid connection issues."""
-        return PostgresDatabaseManager()
-
-    def load_symbols(self, processed=False, limit=None, db_connection=None):
-        """Unified symbol loading method - simplified without exchange filtering."""
-        def _load_symbols_query(db):
-            if processed:
-                # Load all valid symbols
-                base_query = "SELECT symbol_id, symbol FROM extracted.listing_status WHERE asset_type = 'Stock'"
-                params = []
+        """Get database manager with context management."""
+        if not self.db_manager:
+            self.db_manager = PostgresDatabaseManager()
+        return self.db_manager
+    
+    def _initialize_watermark_manager(self, db):
+        """Initialize watermark manager with database connection."""
+        if not self.watermark_manager:
+            self.watermark_manager = WatermarkManager(db)
+        return self.watermark_manager
+    
+    def _ensure_schema_exists(self, db):
+        """Ensure the source schema and tables exist."""
+        try:
+            # Read and execute the source schema
+            schema_file = Path(__file__).parent.parent.parent / "db" / "schema" / "source_schema.sql"
+            if schema_file.exists():
+                with open(schema_file, 'r') as f:
+                    schema_sql = f.read()
+                db.execute_script(schema_sql)
+                print(f"✅ Source schema initialized")
             else:
-                # Load unprocessed symbols (not in balance_sheet table)
-                if not db.table_exists("extracted.balance_sheet"):
-                    self.create_balance_sheet_table(db)
-                
-                base_query = """
-                    SELECT ls.symbol_id, ls.symbol
-                    FROM extracted.listing_status ls
-                    LEFT JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
-                    WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
-                """
-                params = []
-
-            if not processed:
-                base_query += " GROUP BY ls.symbol_id, ls.symbol"
+                print(f"⚠️ Schema file not found: {schema_file}")
+        except Exception as e:
+            print(f"⚠️ Schema initialization error: {e}")
+    
+    def _fetch_api_data(self, symbol: str) -> tuple[Dict[str, Any], str]:
+        """
+        Fetch balance sheet data from Alpha Vantage API.
+        
+        Args:
+            symbol: Stock symbol to fetch
             
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
-        
-        # Use provided connection or create new one
-        if db_connection:
-            return _load_symbols_query(db_connection)
-        else:
-            db_manager = self._get_db_manager()
-            with db_manager as db:
-                return _load_symbols_query(db)
-
-    def _validate_api_response(self, data, symbol):
-        """Unified API response validation to reduce redundant error checking."""
-        if "Error Message" in data:
-            print(f"API Error for {symbol}: {data['Error Message']}")
-            return False, "fail"
-        
-        if "Note" in data:
-            print(f"API Note for {symbol}: {data['Note']}")
-            return False, "fail"
-        
-        if "annualReports" not in data and "quarterlyReports" not in data:
-            print(f"No balance sheet data found for {symbol}")
-            return False, "fail"
-        
-        return True, "pass"
-
-    def extract_single_balance_sheet(self, symbol):
-        """Extract balance sheet data for a single symbol with unified error handling."""
-        print(f"Processing TICKER: {symbol}")
-        url = f"{self.base_url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}"
+        Returns:
+            Tuple of (api_response, status)
+        """
+        url = f"https://www.alphavantage.co/query"
+        params = {
+            "function": STOCK_API_FUNCTION,
+            "symbol": symbol,
+            "apikey": self.api_key
+        }
         
         try:
-            response = requests.get(url)
+            print(f"Fetching data from: {url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}")
+            response = requests.get(url, params=params, timeout=30)
             response.raise_for_status()
+            
             data = response.json()
             
-            # Use unified validation
-            is_valid, status = self._validate_api_response(data, symbol)
-            if not is_valid:
-                return None, status
-            
-            print(f"Successfully fetched balance sheet data for {symbol}")
-            return data, "pass"
-            
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching data for {symbol}: {e}")
-            return None, "fail"
+            # Check for API errors
+            if "Error Message" in data:
+                return data, "error"
+            elif "Note" in data:
+                return data, "rate_limited"
+            elif not data or len(data) == 0:
+                return data, "empty"
+            else:
+                return data, "success"
+                
         except Exception as e:
-            print(f"Unexpected error for {symbol}: {e}")
-            return None, "fail"
-
-    def _process_reports(self, data, symbol, symbol_id, timestamp):
-        """Process both annual and quarterly reports with unified logic."""
+            print(f"API request failed for {symbol}: {e}")
+            return {"error": str(e)}, "error"
+    
+    def _store_landing_record(self, db, symbol: str, symbol_id: int, 
+                            api_response: Dict[str, Any], status: str, run_id: str) -> str:
+        """
+        Store raw API response in landing table.
+        
+        Args:
+            db: Database manager
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            api_response: Raw API response
+            status: Response status
+            run_id: Unique run ID
+            
+        Returns:
+            Content hash of the response
+        """
+        content_hash = ContentHasher.calculate_api_response_hash(api_response)
+        
+        insert_query = """
+            INSERT INTO source.api_responses_landing 
+            (table_name, symbol, symbol_id, api_function, api_response, 
+             content_hash, source_run_id, response_status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        db.execute_query(insert_query, (
+            self.table_name, symbol, symbol_id, STOCK_API_FUNCTION,
+            json.dumps(api_response), content_hash, run_id, status
+        ))
+        
+        return content_hash
+    
+    def _transform_data(self, symbol: str, symbol_id: int, api_response: Dict[str, Any], 
+                       run_id: str) -> List[Dict[str, Any]]:
+        """
+        Transform API response to standardized records.
+        
+        Args:
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            api_response: Raw API response
+            run_id: Unique run ID
+            
+        Returns:
+            List of transformed records
+        """
         records = []
         
-        for report_type in ["annualReports", "quarterlyReports"]:
-            type_name = report_type.replace("Reports", "").lower()  # "annual" or "quarterly"
-            
-            if report_type in data:
-                if data[report_type]:  # Has data
-                    for report in data[report_type]:
-                        record = self._transform_single_report(symbol, symbol_id, report, type_name, timestamp)
-                        if record:
-                            records.append(record)
-                else:  # Empty array
-                    empty_record = self._create_base_record(symbol, symbol_id, type_name, "empty", timestamp)
-                    records.append(empty_record)
+        # Process quarterly reports
+        quarterly_reports = api_response.get("quarterlyReports", [])
+        for report in quarterly_reports:
+            record = self._transform_single_report(
+                symbol, symbol_id, report, "quarterly", run_id
+            )
+            if record:
+                records.append(record)
+        
+        # Process annual reports
+        annual_reports = api_response.get("annualReports", [])
+        for report in annual_reports:
+            record = self._transform_single_report(
+                symbol, symbol_id, report, "annual", run_id
+            )
+            if record:
+                records.append(record)
         
         return records
-
-    def transform_balance_sheet_data(self, symbol, symbol_id, data, status):
-        """Transform balance sheet data to match database schema - streamlined version."""
-        current_timestamp = datetime.now().isoformat()
-
-        if status == "fail" or data is None:
-            # Create error records for both annual and quarterly
-            records = [
-                self._create_base_record(symbol, symbol_id, "annual", "error", current_timestamp),
-                self._create_base_record(symbol, symbol_id, "quarterly", "error", current_timestamp)
-            ]
-            print(f"Created {len(records)} error records for {symbol}")
-            return records
-
-        try:
-            records = self._process_reports(data, symbol, symbol_id, current_timestamp)
-            print(f"Transformed {len(records)} balance sheet records for {symbol}")
-            return records
-        except Exception as e:
-            print(f"Error transforming data for {symbol}: {e}")
-            return []
-
-    def _convert_value(self, value):
-        """Convert API values to database format."""
-        if value in (None, "None", ""):
-            return None
-        try:
-            return int(float(value))
-        except (ValueError, TypeError):
-            return None
-
-    def _create_base_record(self, symbol, symbol_id, report_type, api_status, timestamp):
-        """Create base record template - consolidated record creation logic."""
-        return {
-            "symbol_id": symbol_id,
-            "symbol": symbol,
-            "fiscal_date_ending": None,
-            "report_type": report_type,
-            "reported_currency": None,
-            "api_response_status": api_status,
-            "created_at": timestamp,
-            "updated_at": timestamp,
-            **{field: None for field in BALANCE_SHEET_FIELDS.keys()}
-        }
-
-    def _transform_single_report(self, symbol, symbol_id, report, report_type, timestamp):
-        """Transform a single balance sheet report using schema-driven approach."""
-        try:
-            # Start with base record
-            record = self._create_base_record(symbol, symbol_id, report_type, "pass", timestamp)
+    
+    def _transform_single_report(self, symbol: str, symbol_id: int, 
+                                report: Dict[str, Any], report_type: str, 
+                                run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Transform a single balance sheet report.
+        
+        Args:
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            report: Single report data
+            report_type: 'quarterly' or 'annual'
+            run_id: Unique run ID
             
-            # Update with actual data
+        Returns:
+            Transformed record or None if invalid
+        """
+        try:
+            # Initialize record with all fields as None
+            record = {field: None for field in BALANCE_SHEET_FIELDS.keys()}
+            
+            # Set known values
             record.update({
-                "fiscal_date_ending": report.get("fiscalDateEnding"),
-                "reported_currency": report.get("reportedCurrency"),
+                "symbol_id": symbol_id,
+                "symbol": symbol,
+                "report_type": report_type,
+                "api_response_status": "pass",
+                "source_run_id": run_id,
+                "fetched_at": datetime.now()
             })
             
-            # Apply field mappings using schema configuration
+            # Helper function to convert API values
+            def convert_value(value):
+                if value is None or value == "None" or value == "":
+                    return None
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return None
+            
+            # Map API fields to database fields using schema-driven approach
             for db_field, api_field in BALANCE_SHEET_FIELDS.items():
-                record[db_field] = self._convert_value(report.get(api_field))
+                if db_field in ["symbol_id", "symbol", "report_type"]:
+                    # These are already set
+                    continue
+                elif api_field == 'fiscalDateEnding':
+                    # Use deterministic date parsing
+                    record[db_field] = DateUtils.parse_fiscal_date(report.get(api_field))
+                elif api_field in report:
+                    record[db_field] = convert_value(report.get(api_field))
+            
+            # Handle special fields not in the main mapping
+            record["fiscal_date_ending"] = DateUtils.parse_fiscal_date(report.get("fiscalDateEnding"))
+            record["reported_currency"] = report.get("reportedCurrency")
             
             # Validate required fields
             if not record["fiscal_date_ending"]:
                 print(f"Missing fiscal_date_ending for {symbol} {report_type} report")
                 return None
             
+            # Calculate content hash for change detection
+            record["content_hash"] = ContentHasher.calculate_business_content_hash(record)
+            
             return record
             
         except Exception as e:
-            print(f"Error transforming single report for {symbol}: {e}")
+            print(f"Error transforming report for {symbol}: {e}")
             return None
-
-    def load_balance_sheet_data(self, records, db_connection=None):
-        """Load balance sheet records into the database - simplified connection handling."""
-        if not records:
-            print("No records to load")
-            return
-
-        print(f"Loading {len(records)} records into database...")
-
-        def _insert_records(db):
-            if not db.table_exists("extracted.balance_sheet"):
-                self.create_balance_sheet_table(db)
-
-            columns = list(records[0].keys())
-            placeholders = ", ".join(["%s" for _ in columns])
-            insert_query = f"INSERT INTO extracted.balance_sheet ({', '.join(columns)}) VALUES ({placeholders})"
-            
-            record_tuples = [tuple(record[col] for col in columns) for record in records]
-            rows_affected = db.execute_many(insert_query, record_tuples)
-            print(f"Successfully loaded {rows_affected} records into extracted.balance_sheet table")
-
-        # Always use the provided connection since we're in a context manager
-        if db_connection:
-            _insert_records(db_connection)
-        else:
-            # This shouldn't happen in our streamlined version but keep as fallback
-            db_manager = self._get_db_manager()
-            with db_manager as db:
-                _insert_records(db)
-
-    def create_balance_sheet_table(self, db):
-        """Create the balance_sheet table using schema-driven approach."""
-        # Generate column definitions from schema
-        field_definitions = []
-        for field in BALANCE_SHEET_FIELDS.keys():
-            field_definitions.append(f"{field} BIGINT")
-        
-        create_table_sql = f"""
-            CREATE SCHEMA IF NOT EXISTS extracted;
-            
-            CREATE TABLE IF NOT EXISTS extracted.balance_sheet (
-                symbol_id INTEGER NOT NULL,
-                symbol VARCHAR(20) NOT NULL,
-                fiscal_date_ending DATE,
-                report_type VARCHAR(10) NOT NULL CHECK (report_type IN ('annual', 'quarterly')),
-                reported_currency VARCHAR(10),
-                {', '.join(field_definitions)},
-                api_response_status VARCHAR(20),
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_balance_sheet_symbol_id ON extracted.balance_sheet(symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_balance_sheet_fiscal_date ON extracted.balance_sheet(fiscal_date_ending);
+    
+    def _content_has_changed(self, db, symbol_id: int, content_hash: str) -> bool:
         """
-        db.execute_query(create_table_sql)
-        print("Created extracted.balance_sheet table with indexes")
-
-    def _track_progress(self, symbol, symbol_id, records, index, total, success_count, fail_count):
-        """Unified progress tracking to reduce redundant logging."""
-        if records:
-            success_count += 1
-            print(f"✓ Processed {symbol} (ID: {symbol_id}) - {len(records)} records [{index+1}/{total}]")
+        Check if content has changed based on hash comparison.
+        
+        Args:
+            db: Database manager
+            symbol_id: Symbol ID
+            content_hash: New content hash
+            
+        Returns:
+            True if content has changed or is new
+        """
+        query = """
+            SELECT COUNT(*) FROM source.balance_sheet 
+            WHERE symbol_id = %s AND content_hash = %s
+        """
+        
+        result = db.fetch_query(query, (symbol_id, content_hash))
+        return result[0][0] == 0 if result else True  # True if no matching hash found
+    
+    def _upsert_records(self, db, records: List[Dict[str, Any]]) -> int:
+        """
+        Upsert records into the balance sheet table.
+        
+        Args:
+            db: Database manager
+            records: List of records to upsert
+            
+        Returns:
+            Number of rows affected
+        """
+        if not records:
+            return 0
+        
+        # Get column names (excluding auto-generated ones)
+        columns = [col for col in records[0].keys() 
+                  if col not in ['balance_sheet_id', 'created_at', 'updated_at']]
+        
+        # Build upsert query
+        placeholders = ", ".join(["%s" for _ in columns])
+        update_columns = [col for col in columns 
+                         if col not in ['symbol_id', 'fiscal_date_ending', 'report_type']]
+        update_set = [f"{col} = EXCLUDED.{col}" for col in update_columns]
+        update_set.append("updated_at = NOW()")
+        
+        upsert_query = f"""
+            INSERT INTO source.balance_sheet ({', '.join(columns)}, created_at, updated_at) 
+            VALUES ({placeholders}, NOW(), NOW())
+            ON CONFLICT (symbol_id, fiscal_date_ending, report_type) 
+            DO UPDATE SET {', '.join(update_set)}
+        """
+        
+        # Prepare record values
+        record_values = []
+        for record in records:
+            values = [record[col] for col in columns]
+            record_values.append(tuple(values))
+        
+        # Execute upsert
+        with db.connection.cursor() as cursor:
+            cursor.executemany(upsert_query, record_values)
+            db.connection.commit()
+            return cursor.rowcount
+    
+    def extract_symbol(self, symbol: str, symbol_id: int, db) -> Dict[str, Any]:
+        """
+        Extract balance sheet data for a single symbol.
+        
+        Args:
+            symbol: Stock symbol
+            symbol_id: Symbol ID
+            db: Database manager (passed from caller)
+            
+        Returns:
+            Processing result summary
+        """
+        run_id = RunIdGenerator.generate()
+        
+        watermark_mgr = self._initialize_watermark_manager(db)
+        
+        # Fetch API data
+        api_response, status = self._fetch_api_data(symbol)
+        
+        # Store in landing table (always)
+        content_hash = self._store_landing_record(
+            db, symbol, symbol_id, api_response, status, run_id
+        )
+        
+        # Process if successful
+        if status == "success":
+            # Check if content has changed
+            if not self._content_has_changed(db, symbol_id, content_hash):
+                print(f"No changes detected for {symbol}, skipping transformation")
+                watermark_mgr.update_watermark(self.table_name, symbol_id, success=True)
+                return {
+                    "symbol": symbol,
+                    "status": "no_changes",
+                    "records_processed": 0,
+                    "run_id": run_id
+                }
+            
+            # Transform data
+            records = self._transform_data(symbol, symbol_id, api_response, run_id)
+            
+            if records:
+                # Upsert records
+                rows_affected = self._upsert_records(db, records)
+                
+                # Update watermark with latest fiscal date
+                latest_fiscal_date = max(
+                    r['fiscal_date_ending'] for r in records 
+                    if r['fiscal_date_ending']
+                )
+                watermark_mgr.update_watermark(
+                    self.table_name, symbol_id, latest_fiscal_date, success=True
+                )
+                
+                return {
+                    "symbol": symbol,
+                    "status": "success",
+                    "records_processed": len(records),
+                    "rows_affected": rows_affected,
+                    "latest_fiscal_date": latest_fiscal_date,
+                    "run_id": run_id
+                }
+            else:
+                # No valid records
+                watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
+                return {
+                    "symbol": symbol,
+                    "status": "no_valid_records",
+                    "records_processed": 0,
+                    "run_id": run_id
+                }
         else:
-            fail_count += 1
-            print(f"✗ Processed {symbol} (ID: {symbol_id}) - 0 records [{index+1}/{total}]")
-        return success_count, fail_count
-
-    def run_etl_incremental(self, limit=None):
-        """Run ETL only for symbols not yet processed - simplified without exchange filtering."""
-        print("Starting Incremental Balance Sheet ETL process...")
-        print(f"Configuration: limit={limit}")
-
-        try:
-            # Create a fresh database manager for this run to avoid connection issues
-            db_manager = self._get_db_manager()
-            with db_manager as db:
-                # Load unprocessed symbols using unified method with same connection
-                symbol_mapping = self.load_symbols(processed=False, limit=limit, db_connection=db)
-                symbols = list(symbol_mapping.keys())
-                print(f"Found {len(symbols)} unprocessed symbols")
-
-                if not symbols:
-                    print("No unprocessed symbols found")
-                    return
-
-                total_records = 0
-                success_count = 0
-                fail_count = 0
-
-                for i, symbol in enumerate(symbols):
-                    symbol_id = symbol_mapping[symbol]
-
-                    try:
-                        # Extract and transform
-                        data, status = self.extract_single_balance_sheet(symbol)
-                        records = self.transform_balance_sheet_data(symbol, symbol_id, data, status)
-
-                        # Load and track progress
-                        if records:
-                            self.load_balance_sheet_data(records, db)
-                            total_records += len(records)
-                        
-                        success_count, fail_count = self._track_progress(
-                            symbol, symbol_id, records, i, len(symbols), success_count, fail_count
-                        )
-
-                    except Exception as e:
-                        fail_count += 1
-                        print(f"✗ Error processing {symbol} (ID: {symbol_id}): {e} [{i+1}/{len(symbols)}]")
-                        continue
-
-                    # Rate limiting
-                    if i < len(symbols) - 1:
-                        time.sleep(self.rate_limit_delay)
-
-                # Get remaining count - simplified query
-                remaining_query = """
-                    SELECT COUNT(DISTINCT ls.symbol_id)
-                    FROM extracted.listing_status ls
-                    LEFT JOIN extracted.balance_sheet bs ON ls.symbol_id = bs.symbol_id
-                    WHERE ls.asset_type = 'Stock' AND bs.symbol_id IS NULL
-                """
-                remaining_count = db.fetch_query(remaining_query)[0][0]
-
-                # Print summary
-                self._print_summary(len(symbols), success_count, fail_count, remaining_count, total_records)
-                print("Incremental Balance Sheet ETL process completed successfully!")
-
-        except Exception as e:
-            print(f"Incremental Balance Sheet ETL process failed: {e}")
-            raise
-
-    def _print_summary(self, total_processed, success_count, fail_count, remaining_count, total_records):
-        """Centralized summary printing - simplified without exchange info."""
-        print("\n" + "=" * 50)
-        print("Incremental Balance Sheet ETL Summary:")
-        print(f"  Total symbols processed: {total_processed}")
-        print(f"  Successful symbols: {success_count}")
-        print(f"  Failed symbols: {fail_count}")
-        print(f"  Remaining symbols: {remaining_count}")
-        print(f"  Total records loaded: {total_records:,}")
-        print(f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}")
-        print("=" * 50)
+            # API failure
+            watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
+            return {
+                "symbol": symbol,
+                "status": "api_failure",
+                "error": status,
+                "records_processed": 0,
+                "run_id": run_id
+            }
+    
+    def run_incremental_extraction(self, limit: Optional[int] = None, 
+                                 staleness_hours: int = 24) -> Dict[str, Any]:
+        """
+        Run incremental extraction for symbols that need processing.
+        
+        Args:
+            limit: Maximum number of symbols to process
+            staleness_hours: Hours before data is considered stale
+            
+        Returns:
+            Processing summary
+        """
+        print(f"🚀 Starting incremental balance sheet extraction...")
+        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}")
+        
+        with self._get_db_manager() as db:
+            # Ensure schema exists
+            self._ensure_schema_exists(db)
+            
+            watermark_mgr = self._initialize_watermark_manager(db)
+            
+            # Get symbols needing processing
+            symbols_to_process = watermark_mgr.get_symbols_needing_processing(
+                self.table_name, staleness_hours=staleness_hours, limit=limit
+            )
+            
+            print(f"Found {len(symbols_to_process)} symbols needing processing")
+            
+            if not symbols_to_process:
+                print("✅ No symbols need processing")
+                return {
+                    "symbols_processed": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "no_changes": 0,
+                    "total_records": 0
+                }
+            
+            # Process symbols
+            results = {
+                "symbols_processed": 0,
+                "successful": 0,
+                "failed": 0,
+                "no_changes": 0,
+                "total_records": 0,
+                "details": []
+            }
+            
+            for i, symbol_data in enumerate(symbols_to_process, 1):
+                symbol_id = symbol_data["symbol_id"]
+                symbol = symbol_data["symbol"]
+                
+                print(f"Processing {symbol} (ID: {symbol_id}) [{i}/{len(symbols_to_process)}]")
+                
+                # Extract symbol data
+                result = self.extract_symbol(symbol, symbol_id, db)
+                results["details"].append(result)
+                results["symbols_processed"] += 1
+                
+                if result["status"] == "success":
+                    results["successful"] += 1
+                    results["total_records"] += result["records_processed"]
+                    print(f"✅ {symbol}: {result['records_processed']} records processed")
+                elif result["status"] == "no_changes":
+                    results["no_changes"] += 1
+                    print(f"⚪ {symbol}: No changes detected")
+                else:
+                    results["failed"] += 1
+                    print(f"❌ {symbol}: {result['status']}")
+                
+                # Rate limiting
+                if i < len(symbols_to_process):
+                    time.sleep(API_DELAY_SECONDS)
+            
+            print(f"\n🎯 Incremental extraction completed:")
+            print(f"  Symbols processed: {results['symbols_processed']}")
+            print(f"  Successful: {results['successful']}")
+            print(f"  No changes: {results['no_changes']}")
+            print(f"  Failed: {results['failed']}")
+            print(f"  Total records: {results['total_records']}")
+            
+            return results
 
 
 def main():
-    """Main function to run the balance sheet extraction."""
-    extractor = BalanceSheetExtractor()
+    """Main execution function."""
+    parser = argparse.ArgumentParser(description="Balance Sheet Extractor")
+    parser.add_argument("--limit", type=int, help="Maximum number of symbols to process")
+    parser.add_argument("--staleness-hours", type=int, default=24, 
+                       help="Hours before data is considered stale (default: 24)")
     
-    # Simple approach: process symbols without exchange filtering
-    # Start with a small batch to test
-    extractor.run_etl_incremental(limit=25000)
+    args = parser.parse_args()
+    
+    extractor = BalanceSheetExtractor()
+    result = extractor.run_incremental_extraction(
+        limit=args.limit,
+        staleness_hours=args.staleness_hours
+    )
+    
+    # Exit with appropriate code
+    if result["failed"] > 0 and result["successful"] == 0:
+        sys.exit(1)  # All failed
+    else:
+        sys.exit(0)  # Some or all successful
 
 
 if __name__ == "__main__":
     main()
+
+# -----------------------------------------------------------------------------
+# Example commands (PowerShell):
+# 
+# Basic incremental extraction (process up to 50 symbols, 24-hour staleness):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 50
+#
+# Process only 10 symbols (useful for testing):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 10
+#
+# Aggressive refresh (1-hour staleness, process 25 symbols):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 25 --staleness-hours 1
+#
+# Weekly batch processing (7-day staleness, no limit):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --staleness-hours 168
+#
+# Large batch processing (process 100 symbols, 24-hour staleness):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 100 --staleness-hours 24
+#
+# Force refresh of recent data (6-hour staleness, 50 symbols):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 50 --staleness-hours 6
+#
+# Process unprocessed symbols only (very long staleness period):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 25 --staleness-hours 8760
+# -----------------------------------------------------------------------------
