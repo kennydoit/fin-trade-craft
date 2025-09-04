@@ -544,7 +544,7 @@ if __name__ == "__main__":
 # Example commands (PowerShell):
 # 
 # Basic incremental extraction (process up to 50 symbols, 24-hour staleness):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 50
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 25000
 #
 # Process only 10 symbols (useful for testing):
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_balance_sheet.py --limit 10

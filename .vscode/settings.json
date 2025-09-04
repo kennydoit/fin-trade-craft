@@ -31,5 +31,21 @@
     "code-runner.saveFileBeforeRun": true,
     "code-runner.executorMapByFileExtension": {
         ".py": "$pythonPath -u $fullFileName"
-    }
+    },
+    "sqltools.connections": [
+        {
+            "name": "fin-trade-craft-local",
+            "driver": "PostgreSQL",
+            "server": "localhost",
+            "port": 5432,
+            "database": "fin_trade_craft",
+            "username": "postgres",
+            "askForPassword": true,
+            "connectOnStartup": false,
+            "previewLimit": 50,
+            "connectionTimeout": 30
+        }
+    ],
+    "sqltools.useNodeRuntime": true,
+    "sqltools.defaultExportType": "json"
 }
