@@ -1,20 +1,29 @@
 """
-Extract commodities data from Alpha Vantage API and load into database.
+Commodities Extractor using incremental ETL architecture.
+Uses source schema, watermarks, and deterministic processing.
 """
 
 import os
 import sys
 import time
-from datetime import date
+import json
+import argparse
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, List, Any, Optional
 
-import pandas as pd
 import requests
+import pandas as pd
+import numpy as np
 from dotenv import load_dotenv
 
-# Add the parent directories to the path so we can import from db
+# Add the parent directories to the path so we can import from db and utils
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+
+# API configuration
+API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
 # Commodity configurations: function_name -> (interval, display_name)
 COMMODITY_CONFIGS = {
@@ -31,643 +40,617 @@ COMMODITY_CONFIGS = {
     "ALL_COMMODITIES": ("monthly", "Global Commodities Index"),
 }
 
+# Schema-driven field mapping configuration
+COMMODITIES_FIELDS = {
+    'commodity_id': 'commodity_id',
+    'commodity_name': 'commodity_name',
+    'function_name': 'function_name',
+    'date': 'date',
+    'interval': 'interval',
+    'unit': 'unit',
+    'value': 'value',
+    'name': 'name',
+}
+
 
 class CommoditiesExtractor:
-    """Extract and load commodities data from Alpha Vantage API."""
-
+    """Commodities extractor with incremental processing."""
+    
     def __init__(self):
-        # Load ALPHAVANTAGE_API_KEY from .env file
+        """Initialize the extractor."""
         load_dotenv()
         self.api_key = os.getenv("ALPHAVANTAGE_API_KEY")
-
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
-
-        self.db_manager = PostgresDatabaseManager()
+        
+        self.table_name = "commodities"
+        self.schema_name = "source"
+        self.db_manager = None
+        self.watermark_manager = None
         self.base_url = "https://www.alphavantage.co/query"
-
-        # Rate limiting: 75 requests per minute for Alpha Vantage Premium
-        self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
-
-    def create_commodities_table_if_not_exists(self, db):
-        """Create the commodities table in the extracted schema if it doesn't exist."""
-        create_table_sql = """
-            CREATE SCHEMA IF NOT EXISTS extracted;
-
-            CREATE TABLE IF NOT EXISTS extracted.commodities (
-                commodity_id        SERIAL PRIMARY KEY,
-                commodity_name      VARCHAR(100) NOT NULL,
-                function_name       VARCHAR(50) NOT NULL,
-                date                DATE,
-                interval            VARCHAR(10) NOT NULL CHECK (interval IN ('daily','monthly')),
-                unit                VARCHAR(50),
-                value               NUMERIC(15,6),
-                name                VARCHAR(255),
-                api_response_status VARCHAR(20),
-                created_at          TIMESTAMP DEFAULT NOW(),
-                updated_at          TIMESTAMP DEFAULT NOW(),
-                UNIQUE(commodity_name, date, interval)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_commodities_name ON extracted.commodities(commodity_name);
-            CREATE INDEX IF NOT EXISTS idx_commodities_date ON extracted.commodities(date);
+    
+    def _get_db_manager(self):
+        """Get database manager with context management."""
+        if not self.db_manager:
+            self.db_manager = PostgresDatabaseManager()
+        return self.db_manager
+    
+    def _initialize_watermark_manager(self, db):
+        """Initialize watermark manager with database connection."""
+        if not self.watermark_manager:
+            self.watermark_manager = WatermarkManager(db)
+        return self.watermark_manager
+    
+    def _ensure_schema_exists(self, db):
+        """Ensure the source schema and tables exist."""
+        try:
+            # Read and execute the source schema first
+            schema_file = Path(__file__).parent.parent.parent / "db" / "schema" / "source_schema.sql"
+            if schema_file.exists():
+                with open(schema_file, 'r') as f:
+                    schema_sql = f.read()
+                db.execute_script(schema_sql)
+                print(f"✅ Source schema initialized")
+            else:
+                print(f"⚠️ Schema file not found: {schema_file}")
+            
+            # Add commodities table to source schema
+            commodities_table_sql = """
+                -- Make symbol_id nullable in landing table for non-stock data
+                ALTER TABLE source.api_responses_landing 
+                ALTER COLUMN symbol_id DROP NOT NULL;
+                
+                -- Drop and recreate the foreign key constraint to allow NULLs
+                ALTER TABLE source.api_responses_landing 
+                DROP CONSTRAINT IF EXISTS api_responses_landing_symbol_id_fkey;
+                
+                ALTER TABLE source.api_responses_landing 
+                ADD CONSTRAINT api_responses_landing_symbol_id_fkey 
+                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE;
+                
+                -- Commodities table with modern schema
+                CREATE TABLE IF NOT EXISTS source.commodities (
+                    commodity_id SERIAL PRIMARY KEY,
+                    commodity_name VARCHAR(100) NOT NULL,      -- Standardized display name
+                    function_name VARCHAR(50) NOT NULL,        -- Alpha Vantage function name
+                    date DATE,                                 -- Data date (NULL for status records)
+                    interval VARCHAR(10) NOT NULL,             -- 'daily' or 'monthly'
+                    unit VARCHAR(50),                          -- Price unit (e.g., 'USD per barrel')
+                    value DECIMAL(15,6),                       -- Commodity price/value
+                    name VARCHAR(255),                         -- Full name from API
+                    
+                    -- ETL metadata
+                    api_response_status VARCHAR(20) NOT NULL,  -- 'success', 'empty', 'error'
+                    content_hash VARCHAR(32) NOT NULL,         -- For change detection
+                    source_run_id UUID NOT NULL,               -- Links to landing table
+                    fetched_at TIMESTAMPTZ NOT NULL,           -- When API was called
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    
+                    -- Natural key constraint for idempotent upserts
+                    UNIQUE(commodity_name, function_name, date, interval)
+                );
+                
+                -- Indexes for commodities
+                CREATE INDEX IF NOT EXISTS idx_source_commodities_name_date ON source.commodities(commodity_name, date);
+                CREATE INDEX IF NOT EXISTS idx_source_commodities_fetched_at ON source.commodities(fetched_at);
+                CREATE INDEX IF NOT EXISTS idx_source_commodities_content_hash ON source.commodities(content_hash);
+                CREATE INDEX IF NOT EXISTS idx_source_commodities_interval ON source.commodities(interval);
+                
+                COMMENT ON TABLE source.commodities IS 'Clean commodities data with deterministic natural keys';
+            """
+            
+            db.execute_script(commodities_table_sql)
+            print(f"✅ Commodities table initialized in source schema")
+            
+        except Exception as e:
+            print(f"⚠️ Schema initialization error: {e}")
+    
+    def _fetch_api_data(self, function_name: str) -> tuple[pd.DataFrame, str]:
         """
-        db.execute_query(create_table_sql)
-        print("Created extracted.commodities table with indexes")
-
-    def get_existing_data_dates_with_db(self, db, commodity_name, interval):
-        """Get existing dates for a commodity to avoid duplicates using provided database connection."""
-        # If the table hasn't been created yet, there are no existing dates
-        if not db.table_exists("commodities", schema_name="extracted"):
-            return []
-
-        query = """
-            SELECT date
-            FROM extracted.commodities
-            WHERE commodity_name = %s AND interval = %s AND api_response_status = 'data'
-            ORDER BY date DESC
+        Fetch commodities data from Alpha Vantage API.
+        
+        Args:
+            function_name: Alpha Vantage function name
+            
+        Returns:
+            Tuple of (dataframe, status)
         """
-        result = db.fetch_query(query, (commodity_name, interval))
-        return [row[0] for row in result] if result else []
-
-    def extract_commodity_data(self, function_name):  # noqa: PLR0911
-        """Extract data for a single commodity from Alpha Vantage API."""
         interval, display_name = COMMODITY_CONFIGS[function_name]
-
+        
         params = {
             "function": function_name,
             "interval": interval,
             "datatype": "json",
             "apikey": self.api_key,
         }
-
+        
         try:
-            print(f"Extracting {display_name} data...")
-            response = requests.get(self.base_url, params=params)
+            print(f"Fetching {display_name} data...")
+            response = requests.get(self.base_url, params=params, timeout=30)
             response.raise_for_status()
-
+            
             data = response.json()
-
+            
             # Check for API error messages
             if "Error Message" in data:
                 print(f"API Error for {function_name}: {data['Error Message']}")
-                return None, "error", data.get("Error Message", "Unknown API error")
-
+                return pd.DataFrame(), "error"
+            
             if "Note" in data:
                 print(f"API Note for {function_name}: {data['Note']}")
-                return None, "error", data.get("Note", "API rate limit or other note")
-
+                return pd.DataFrame(), "rate_limited"
+            
             if "Information" in data:
                 print(f"API Information for {function_name}: {data['Information']}")
-                return None, "error", data.get("Information", "API information message")
-
+                return pd.DataFrame(), "error"
+            
             # Check if we have data
             if "data" not in data:
                 print(f"No 'data' field found in response for {function_name}")
-                return None, "empty", "No data field in API response"
-
+                return pd.DataFrame(), "empty"
+            
             commodity_data = data["data"]
             if not commodity_data:
                 print(f"Empty data array for {function_name}")
-                return None, "empty", "Empty data array"
-
+                return pd.DataFrame(), "empty"
+            
             # Extract metadata
             name = data.get("name", display_name)
             unit = data.get("unit", "")
-
+            
             # Convert to DataFrame
             df = pd.DataFrame(commodity_data)
+            
+            # Add metadata columns
             df["commodity_name"] = display_name
             df["function_name"] = function_name
             df["interval"] = interval
             df["unit"] = unit
             df["name"] = name
-            df["api_response_status"] = "data"
-
+            
             # Convert value to float
             df["value"] = pd.to_numeric(df["value"], errors="coerce")
-
+            
             # Convert date
             df["date"] = pd.to_datetime(df["date"]).dt.date
-
-            print(f"Successfully extracted {len(df)} records for {display_name}")
-            return df, "data", f"Successfully extracted {len(df)} records"
-
+            
+            print(f"Successfully fetched {len(df)} records for {display_name}")
+            return df, "success"
+            
         except requests.exceptions.RequestException as e:
-            error_msg = f"Request error for {function_name}: {str(e)}"
-            print(error_msg)
-            return None, "error", error_msg
+            print(f"Request error for {function_name}: {str(e)}")
+            return pd.DataFrame(), "error"
         except Exception as e:
-            error_msg = f"Unexpected error for {function_name}: {str(e)}"
-            print(error_msg)
-            return None, "error", error_msg
-
-    def load_commodity_data_with_db(
-        self, db, df, commodity_name, _function_name, interval
-    ):
-        """Load commodity data into the database using provided database connection."""
-        if df is None or df.empty:
-            return 0
-
-        # Ensure the table exists before querying it
-        if not db.table_exists("commodities", schema_name="extracted"):
-            self.create_commodities_table_if_not_exists(db)
-
-        # Get existing dates to avoid duplicates
-        existing_dates = set(
-            self.get_existing_data_dates_with_db(db, commodity_name, interval)
-        )
-
-        # Filter out existing dates
-        if existing_dates:
-            df = df[~df["date"].isin(existing_dates)]
-            if df.empty:
-                print(
-                    f"All {len(existing_dates)} records for {commodity_name} already exist in database"
-                )
-                return 0
-
-        # Prepare data for insertion
-        records = []
-        for _, row in df.iterrows():
-            record = (
-                row["commodity_name"],
-                row["function_name"],
-                row["date"],
-                row["interval"],
-                row["unit"],
-                row["value"],
-                row["name"],
-                row["api_response_status"],
-            )
-            records.append(record)
-
+            print(f"Unexpected error for {function_name}: {str(e)}")
+            return pd.DataFrame(), "error"
+    
+    def _store_landing_record(self, db, function_name: str, df: pd.DataFrame, 
+                            status: str, run_id: str) -> str:
+        """
+        Store raw API response in landing table.
+        
+        Args:
+            db: Database manager
+            function_name: Alpha Vantage function name
+            df: DataFrame with API response
+            status: Response status
+            run_id: Unique run ID
+            
+        Returns:
+            Content hash of the response
+        """
+        # Convert DataFrame to dict for storage
+        if not df.empty:
+            # Convert DataFrame copy to handle date serialization and NaN values
+            df_for_json = df.copy()
+            # Convert date objects to strings for JSON serialization
+            if 'date' in df_for_json.columns:
+                df_for_json['date'] = df_for_json['date'].astype(str)
+            # Replace NaN values with None for JSON serialization
+            df_for_json = df_for_json.replace({np.nan: None})
+            
+            api_response = {
+                "data": df_for_json.to_dict("records"),
+                "columns": list(df.columns),
+                "row_count": len(df),
+                "function_name": function_name
+            }
+        else:
+            api_response = {"data": [], "columns": [], "row_count": 0, "function_name": function_name}
+        
+        content_hash = ContentHasher.calculate_api_response_hash(api_response)
+        
         insert_query = """
-            INSERT INTO extracted.commodities
-            (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
+            INSERT INTO source.api_responses_landing 
+            (table_name, symbol, symbol_id, api_function, api_response, 
+             content_hash, source_run_id, response_status)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (commodity_name, date, interval) DO NOTHING
         """
-
-        inserted_count = db.execute_many(insert_query, records)
-        print(f"Inserted {inserted_count} new records for {commodity_name}")
-        return inserted_count
-
-
-    def record_status_with_db(  # noqa: PLR0913
-        self, db, commodity_name, function_name, interval, status, message
-    ) -> None:
-        """Record extraction status (empty/error/pass) in database using provided database connection."""
-        if not db.table_exists("commodities", schema_name="extracted"):
-            self.create_commodities_table_if_not_exists(db)
-
-        # Check if status record already exists
-        check_query = """
-            SELECT commodity_id FROM extracted.commodities
-            WHERE commodity_name = %s AND function_name = %s AND interval = %s
-              AND api_response_status = %s AND date IS NULL
+        
+        # For commodities, we use function_name as symbol and NULL as symbol_id (no FK constraint)
+        db.execute_query(insert_query, (
+            self.table_name, function_name, None, function_name,
+            json.dumps(api_response), content_hash, run_id, status
+        ))
+        
+        return content_hash
+    
+    def _transform_data(self, function_name: str, df: pd.DataFrame, 
+                       run_id: str) -> List[Dict[str, Any]]:
         """
-        existing = db.fetch_query(
-            check_query, (commodity_name, function_name, interval, status)
-        )
-
-        if existing:
-            print(f"Status record already exists for {commodity_name}: {status}")
-            return
-
-        insert_query = """
-            INSERT INTO extracted.commodities
-            (commodity_name, function_name, date, interval, unit, value, name, api_response_status)
-            VALUES (%s, %s, NULL, %s, NULL, NULL, %s, %s)
+        Transform API response to standardized records.
+        
+        Args:
+            function_name: Alpha Vantage function name
+            df: DataFrame with API response
+            run_id: Unique run ID
+            
+        Returns:
+            List of transformed records
         """
-
-        db.execute_query(
-            insert_query, (commodity_name, function_name, interval, message, status)
-        )
-        print(f"Recorded {status} status for {commodity_name}")
-
-    def extract_and_load_commodity_with_db(self, db, function_name):
-        """Extract and load data for a single commodity using provided database connection."""
-        interval, display_name = COMMODITY_CONFIGS[function_name]
-
-        # Extract data from API
-        df, status, message = self.extract_commodity_data(function_name)
-
-        if status == "data":
-            inserted_count = self.load_commodity_data_with_db(
-                db, df, display_name, function_name, interval
-            )
-            return inserted_count, status
-
-        self.record_status_with_db(
-            db, display_name, function_name, interval, status, message
-        )
-        return 0, status
-
-    def run_etl_batch(self, commodity_list=None, batch_size=5):
-        """Run ETL for multiple commodities with batch processing and rate limiting."""
-        if commodity_list is None:
-            commodity_list = list(COMMODITY_CONFIGS.keys())
-
-        print(f"Starting commodities ETL for {len(commodity_list)} commodities...")
-        print(f"Batch size: {batch_size}")
-        print("-" * 50)
-
-        total_inserted = 0
-        status_summary = {"data": 0, "empty": 0, "error": 0, "pass": 0}
-
-        # Use a single database connection for the entire ETL batch
-        with self.db_manager as db:
-            for i, function_name in enumerate(commodity_list):
-                if function_name not in COMMODITY_CONFIGS:
-                    print(f"Unknown commodity function: {function_name}")
+        if df.empty:
+            return []
+        
+        records = []
+        
+        try:
+            # Process each row
+            for _, row in df.iterrows():
+                # Initialize record with all fields as None
+                record = {field: None for field in COMMODITIES_FIELDS.keys()}
+                
+                # Set known values
+                record.update({
+                    "commodity_name": row["commodity_name"],
+                    "function_name": row["function_name"],
+                    "date": row["date"],
+                    "interval": row["interval"],
+                    "unit": row["unit"],
+                    "value": row["value"],
+                    "name": row["name"],
+                    "api_response_status": "success",
+                    "source_run_id": run_id,
+                    "fetched_at": datetime.now()
+                })
+                
+                # Validate required fields
+                if not record["date"] or pd.isna(record["value"]):
+                    print(f"Missing date or value for {function_name} record: {row['date']}, {row['value']}")
                     continue
-
-                display_name = COMMODITY_CONFIGS[function_name][1]
-                print(f"Processing {i+1}/{len(commodity_list)}: {display_name}")
-
-                try:
-                    inserted_count, status = self.extract_and_load_commodity_with_db(
-                        db, function_name
-                    )
-                    total_inserted += inserted_count
-                    status_summary[status] += 1
-
-                    # Rate limiting between requests
-                    if (
-                        i < len(commodity_list) - 1
-                    ):  # Don't sleep after the last request
-                        print(
-                            f"Rate limiting: sleeping for {self.rate_limit_delay} seconds..."
-                        )
-                        time.sleep(self.rate_limit_delay)
-
-                    # Batch processing pause
-                    if (i + 1) % batch_size == 0 and i < len(commodity_list) - 1:
-                        print(
-                            f"Batch {(i + 1) // batch_size} completed. Pausing for 0.8 seconds..."
-                        )
-                        time.sleep(0.8)
-
-                except Exception as e:
-                    print(f"Error processing {display_name}: {str(e)}")
-                    status_summary["error"] += 1
-                    continue
-
-                print("-" * 30)
-
-        # Print summary
-        print("\n" + "=" * 50)
-        print("COMMODITIES ETL SUMMARY")
-        print("=" * 50)
-        print(f"Total commodities processed: {len(commodity_list)}")
-        print(f"Total records inserted: {total_inserted}")
-        print("Status breakdown:")
-        for status, count in status_summary.items():
-            print(f"  - {status}: {count}")
-        print("=" * 50)
-
-        return total_inserted, status_summary
-
-    def create_daily_table_if_not_exists(self, db):
-        """Create the commodities_daily table if it doesn't exist."""
-        if not db.table_exists("commodities_daily", schema_name="extracted"):
-            create_table_sql = """
-                CREATE TABLE IF NOT EXISTS extracted.commodities_daily (
-                    daily_commodity_id       SERIAL PRIMARY KEY,
-                    commodity_name           VARCHAR(100) NOT NULL,
-                    function_name            VARCHAR(50) NOT NULL,
-                    date                     DATE NOT NULL,
-                    original_interval        VARCHAR(15) NOT NULL CHECK (original_interval IN ('daily','monthly','quarterly')),
-                    updated_interval         VARCHAR(15) NOT NULL DEFAULT 'daily',
-                    unit                     VARCHAR(50),
-                    value                    NUMERIC(15,6),
-                    name                     VARCHAR(255),
-                    is_forward_filled        BOOLEAN DEFAULT FALSE,
-                    original_date            DATE,
-                    created_at               TIMESTAMP DEFAULT NOW(),
-                    updated_at               TIMESTAMP DEFAULT NOW(),
-                    UNIQUE(commodity_name, function_name, date)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_commodities_daily_name ON extracted.commodities_daily(commodity_name);
-                CREATE INDEX IF NOT EXISTS idx_commodities_daily_date ON extracted.commodities_daily(date);
-                CREATE INDEX IF NOT EXISTS idx_commodities_daily_interval ON extracted.commodities_daily(original_interval);
-                CREATE INDEX IF NOT EXISTS idx_commodities_daily_forward_filled ON extracted.commodities_daily(is_forward_filled);
-            """
-            db.execute_query(create_table_sql)
-            print("Created extracted.commodities_daily table")
-
-    def transform_to_daily_data(self, db):  # noqa: C901, PLR0912, PLR0915
-        """Transform all commodities data to daily frequency using forward filling."""
-        print("\nStarting daily transformation of commodities...")
-
-        # Create the daily table if it doesn't exist
-        self.create_daily_table_if_not_exists(db)
-
-        # Get all data records from the main commodities table
+                
+                # Calculate content hash for change detection
+                record["content_hash"] = ContentHasher.calculate_business_content_hash(record)
+                
+                records.append(record)
+            
+            print(f"Transformed {len(records)} records for {function_name}")
+            return records
+            
+        except Exception as e:
+            print(f"Error transforming data for {function_name}: {e}")
+            return []
+    
+    def _content_has_changed(self, db, function_name: str, content_hash: str) -> bool:
+        """
+        Check if content has changed based on hash comparison.
+        
+        Args:
+            db: Database manager
+            function_name: Alpha Vantage function name
+            content_hash: New content hash
+            
+        Returns:
+            True if content has changed or is new
+        """
         query = """
-            SELECT commodity_name, function_name, date, interval as original_interval,
-                   unit, value, name
-            FROM extracted.commodities
-            WHERE api_response_status = 'data' AND date IS NOT NULL
-            ORDER BY commodity_name, function_name, date
+            SELECT COUNT(*) FROM source.commodities 
+            WHERE function_name = %s AND content_hash = %s
         """
-        source_data = db.fetch_query(query)
-        if not source_data:
-            print("No source data found for transformation")
+        
+        result = db.fetch_query(query, (function_name, content_hash))
+        return result[0][0] == 0 if result else True  # True if no matching hash found
+    
+    def _upsert_records(self, db, records: List[Dict[str, Any]]) -> int:
+        """
+        Upsert records into the commodities table.
+        
+        Args:
+            db: Database manager
+            records: List of records to upsert
+            
+        Returns:
+            Number of rows affected
+        """
+        if not records:
             return 0
-
-        print(f"Found {len(source_data)} source records to transform")
-
-        df = pd.DataFrame(
-            source_data,
-            columns=[
-                "commodity_name",
-                "function_name",
-                "date",
-                "original_interval",
-                "unit",
-                "value",
-                "name",
-            ],
+        
+        # Get column names (excluding auto-generated ones)
+        columns = [col for col in records[0].keys() 
+                  if col not in ['commodity_id', 'created_at', 'updated_at']]
+        
+        # Build upsert query
+        placeholders = ", ".join(["%s" for _ in columns])
+        update_columns = [col for col in columns 
+                         if col not in ['commodity_name', 'function_name', 'date', 'interval']]
+        update_set = [f"{col} = EXCLUDED.{col}" for col in update_columns]
+        update_set.append("updated_at = NOW()")
+        
+        upsert_query = f"""
+            INSERT INTO source.commodities ({', '.join(columns)}, created_at, updated_at) 
+            VALUES ({placeholders}, NOW(), NOW())
+            ON CONFLICT (commodity_name, function_name, date, interval) 
+            DO UPDATE SET {', '.join(update_set)}
+        """
+        
+        # Prepare record values
+        record_values = []
+        for record in records:
+            values = [record[col] for col in columns]
+            record_values.append(tuple(values))
+        
+        # Execute upsert
+        with db.connection.cursor() as cursor:
+            cursor.executemany(upsert_query, record_values)
+            db.connection.commit()
+            return cursor.rowcount
+    
+    def extract_commodity(self, function_name: str, db) -> Dict[str, Any]:
+        """
+        Extract commodities data for a single function.
+        
+        Args:
+            function_name: Alpha Vantage function name
+            db: Database manager (passed from caller)
+            
+        Returns:
+            Processing result summary
+        """
+        if function_name not in COMMODITY_CONFIGS:
+            return {
+                "function_name": function_name,
+                "status": "invalid_function",
+                "records_processed": 0,
+                "run_id": None
+            }
+        
+        run_id = RunIdGenerator.generate()
+        interval, display_name = COMMODITY_CONFIGS[function_name]
+        
+        # Fetch API data
+        df, status = self._fetch_api_data(function_name)
+        
+        # Store in landing table (always)
+        content_hash = self._store_landing_record(
+            db, function_name, df, status, run_id
         )
-        df["date"] = pd.to_datetime(df["date"])
-
-        total_inserted = 0
-
-        for (commodity_name, function_name), group in df.groupby(
-            ["commodity_name", "function_name"]
-        ):
-            try:
-                group_df = group.sort_values("date")
-                original_interval = group_df["original_interval"].iloc[0]
-                unit = group_df["unit"].iloc[0]
-                name = group_df["name"].iloc[0]
-
-                if original_interval == "daily":
-                    records = []
-                    for _, row in group_df.iterrows():
-                        records.append(
-                            (
-                                commodity_name,
-                                function_name,
-                                row["date"].date(),
-                                original_interval,
-                                "daily",
-                                unit,
-                                row["value"],
-                                name,
-                                False,
-                                row["date"].date(),
-                            )
-                        )
-                    print(f"  Daily data: {len(records)} records")
-
-                elif original_interval in ["monthly", "quarterly"]:
-                    records = []
-                    start_date = group_df["date"].min().date()
-                    end_date = date.today()
-                    print(
-                        f"  {original_interval.title()} data: Forward filling from {start_date} to {end_date}"
-                    )
-                    date_range = pd.date_range(start=start_date, end=end_date, freq="D")
-                    current_value = None
-                    current_original_date = None
-                    for current_ts in date_range:
-                        current_date = current_ts.date()
-                        matching_rows = group_df[
-                            group_df["date"].dt.date == current_date
-                        ]
-                        if not matching_rows.empty:
-                            current_value = matching_rows.iloc[0]["value"]
-                            current_original_date = current_date
-                            is_forward_filled = False
-                        else:
-                            is_forward_filled = current_value is not None
-                        if current_value is not None:
-                            records.append(
-                                (
-                                    commodity_name,
-                                    function_name,
-                                    current_date,
-                                    original_interval,
-                                    "daily",
-                                    unit,
-                                    current_value,
-                                    name,
-                                    is_forward_filled,
-                                    current_original_date,
-                                )
-                            )
-                    print(
-                        f"  {original_interval.title()} data: {len(records)} daily records (forward-filled from {len(group_df)} original records)"
-                    )
-
-                else:
-                    print(
-                        f"  Unsupported interval {original_interval} for {commodity_name}, skipping"
-                    )
-                    continue
-
-                if records:
-                    insert_query = """
-                        INSERT INTO extracted.commodities_daily
-                        (commodity_name, function_name, date, original_interval,
-                         updated_interval, unit, value, name, is_forward_filled, original_date)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (commodity_name, function_name, date) DO NOTHING
-                    """
-                    inserted_count = db.execute_many(insert_query, records)
-                    total_inserted += inserted_count
-                    print(f"  Inserted {inserted_count} daily records")
-                else:
-                    print(f"  No records to insert for {commodity_name}")
-
-            except Exception as e:
-                print(f"  ERROR processing {commodity_name}: {str(e)}")
-                continue
-
-        print(
-            f"\nDaily transformation completed: {total_inserted} total records inserted"
-        )
-        return total_inserted
-
-    def run_etl_with_daily_transform(
-        self,
-        commodity_list=None,
-        batch_size=5,
-        transform_to_daily=True,
-    ):
-        """Run ETL for commodities and optionally transform to daily data."""
-        print("Starting commodities ETL with daily transformation...")
-
-        daily_inserted = 0
-        with self.db_manager as db:
-            total_inserted, status_summary = self.run_etl_batch_with_db(
-                db, commodity_list, batch_size
-            )
-
-            if transform_to_daily:
-                daily_inserted = self.transform_to_daily_data(db)
-
-        print("\nTotal ETL Summary:")
-        print(f"  Original data inserted: {total_inserted}")
-        print(f"  Daily records inserted: {daily_inserted}")
-        print("Status breakdown:")
-        for status, count in status_summary.items():
-            print(f"  - {status}: {count}")
-
-        return total_inserted, status_summary, daily_inserted
-
-    def run_etl_batch_with_db(
-        self, db, commodity_list=None, batch_size=5
-    ):
-        """Run ETL for multiple commodities using provided database connection."""
-        if commodity_list is None:
-            commodity_list = list(COMMODITY_CONFIGS.keys())
-
-        print(f"Starting commodities ETL for {len(commodity_list)} commodities...")
-        print(f"Batch size: {batch_size}")
-        print("-" * 50)
-
-        total_inserted = 0
-        status_summary = {"data": 0, "empty": 0, "error": 0, "pass": 0}
-
-        for i, function_name in enumerate(commodity_list):
-            if function_name not in COMMODITY_CONFIGS:
-                print(f"Unknown commodity function: {function_name}")
-                continue
-
-            display_name = COMMODITY_CONFIGS[function_name][1]
-            print(f"Processing {i+1}/{len(commodity_list)}: {display_name}")
-
-            try:
-                inserted_count, status = self.extract_and_load_commodity_with_db(
-                    db, function_name
+        
+        # Process if successful
+        if status == "success":
+            # Check if content has changed
+            if not self._content_has_changed(db, function_name, content_hash):
+                print(f"No changes detected for {function_name}, skipping transformation")
+                return {
+                    "function_name": function_name,
+                    "commodity_name": display_name,
+                    "status": "no_changes",
+                    "records_processed": 0,
+                    "run_id": run_id
+                }
+            
+            # Transform data
+            records = self._transform_data(function_name, df, run_id)
+            
+            if records:
+                # Upsert records
+                rows_affected = self._upsert_records(db, records)
+                
+                # Get latest date for summary
+                latest_date = max(
+                    r['date'] for r in records 
+                    if r['date']
                 )
-                total_inserted += inserted_count
-                status_summary[status] += 1
-
-                if i < len(commodity_list) - 1:
-                    print(
-                        f"Rate limiting: sleeping for {self.rate_limit_delay} seconds..."
-                    )
-                    time.sleep(self.rate_limit_delay)
-
-                if (i + 1) % batch_size == 0 and i < len(commodity_list) - 1:
-                    print(
-                        f"Batch {(i + 1) // batch_size} completed. Pausing for 0.8 seconds..."
-                    )
+                
+                return {
+                    "function_name": function_name,
+                    "commodity_name": display_name,
+                    "status": "success",
+                    "records_processed": len(records),
+                    "rows_affected": rows_affected,
+                    "latest_date": latest_date,
+                    "run_id": run_id
+                }
+            else:
+                # No valid records
+                return {
+                    "function_name": function_name,
+                    "commodity_name": display_name,
+                    "status": "no_valid_records",
+                    "records_processed": 0,
+                    "run_id": run_id
+                }
+        else:
+            # API failure - store status record
+            self._store_status_record(db, function_name, status, run_id)
+            return {
+                "function_name": function_name,
+                "commodity_name": display_name,
+                "status": "api_failure",
+                "error": status,
+                "records_processed": 0,
+                "run_id": run_id
+            }
+    
+    def _store_status_record(self, db, function_name: str, status: str, run_id: str):
+        """Store a status record for failed extractions."""
+        interval, display_name = COMMODITY_CONFIGS[function_name]
+        
+        record = {
+            "commodity_name": display_name,
+            "function_name": function_name,
+            "date": None,  # NULL for status records
+            "interval": interval,
+            "unit": None,
+            "value": None,
+            "name": display_name,
+            "api_response_status": status,
+            "content_hash": ContentHasher.calculate_business_content_hash({"status": status}),
+            "source_run_id": run_id,
+            "fetched_at": datetime.now()
+        }
+        
+        # Insert status record
+        columns = [col for col in record.keys() 
+                  if col not in ['commodity_id', 'created_at', 'updated_at']]
+        placeholders = ", ".join(["%s" for _ in columns])
+        
+        insert_query = f"""
+            INSERT INTO source.commodities ({', '.join(columns)}, created_at, updated_at) 
+            VALUES ({placeholders}, NOW(), NOW())
+        """
+        
+        values = [record[col] for col in columns]
+        db.execute_query(insert_query, tuple(values))
+    
+    def run_incremental_extraction(self, function_list: Optional[List[str]] = None,
+                                 batch_size: int = 5) -> Dict[str, Any]:
+        """
+        Run incremental extraction for commodities.
+        
+        Args:
+            function_list: List of function names to process (default: all)
+            batch_size: Number of functions to process in each batch
+            
+        Returns:
+            Processing summary
+        """
+        if function_list is None:
+            function_list = list(COMMODITY_CONFIGS.keys())
+        
+        print(f"🚀 Starting incremental commodities extraction...")
+        print(f"Configuration: functions={len(function_list)}, batch_size={batch_size}")
+        
+        with self._get_db_manager() as db:
+            # Ensure schema exists
+            self._ensure_schema_exists(db)
+            
+            print(f"Found {len(function_list)} commodities to process")
+            
+            if not function_list:
+                print("✅ No commodities to process")
+                return {
+                    "functions_processed": 0,
+                    "successful": 0,
+                    "failed": 0,
+                    "no_changes": 0,
+                    "total_records": 0
+                }
+            
+            # Process commodities
+            results = {
+                "functions_processed": 0,
+                "successful": 0,
+                "failed": 0,
+                "no_changes": 0,
+                "total_records": 0,
+                "details": []
+            }
+            
+            for i, function_name in enumerate(function_list, 1):
+                interval, display_name = COMMODITY_CONFIGS.get(function_name, ("unknown", function_name))
+                
+                print(f"Processing {display_name} ({function_name}) [{i}/{len(function_list)}]")
+                
+                # Extract commodity data
+                result = self.extract_commodity(function_name, db)
+                results["details"].append(result)
+                results["functions_processed"] += 1
+                
+                if result["status"] == "success":
+                    results["successful"] += 1
+                    results["total_records"] += result["records_processed"]
+                    print(f"✅ {display_name}: {result['records_processed']} records processed")
+                elif result["status"] == "no_changes":
+                    results["no_changes"] += 1
+                    print(f"⚪ {display_name}: No changes detected")
+                else:
+                    results["failed"] += 1
+                    print(f"❌ {display_name}: {result['status']}")
+                
+                # Rate limiting between requests
+                if i < len(function_list):
+                    time.sleep(API_DELAY_SECONDS)
+                
+                # Batch processing pause
+                if i % batch_size == 0 and i < len(function_list):
+                    print(f"Batch {i // batch_size} completed. Pausing for additional rate limiting...")
                     time.sleep(0.8)
-
-            except Exception as e:
-                print(f"Error processing {display_name}: {str(e)}")
-                status_summary["error"] += 1
-                continue
-
-            print("-" * 30)
-
-        print("\n" + "=" * 50)
-        print("COMMODITIES ETL SUMMARY")
-        print("=" * 50)
-        print(f"Total commodities processed: {len(commodity_list)}")
-        print(f"Total records inserted: {total_inserted}")
-        print("Status breakdown:")
-        for status, count in status_summary.items():
-            print(f"  - {status}: {count}")
-        print("=" * 50)
-
-        return total_inserted, status_summary
-
-    def get_database_summary(self):
-        """Get summary of commodities data in the database."""
-        # Create a fresh database manager instance to avoid connection issues
-        db_manager = PostgresDatabaseManager()
-
-        with db_manager as db:
-            # Total records by status
-            status_query = """
-                SELECT api_response_status, COUNT(*) as count
-                FROM extracted.commodities
-                GROUP BY api_response_status
-                ORDER BY api_response_status
-            """
-            status_results = db.fetch_query(status_query)
-
-            # Data records by commodity
-            commodity_query = """
-                SELECT commodity_name, interval, COUNT(*) as count, MIN(date) as earliest, MAX(date) as latest
-                FROM extracted.commodities
-                WHERE api_response_status = 'data'
-                GROUP BY commodity_name, interval
-                ORDER BY commodity_name, interval
-            """
-            commodity_results = db.fetch_query(commodity_query)
-
-            # Latest values for each commodity
-            latest_query = """
-                SELECT c1.commodity_name, c1.interval, c1.date, c1.value, c1.unit
-                FROM extracted.commodities c1
-                INNER JOIN (
-                    SELECT commodity_name, interval, MAX(date) as max_date
-                    FROM extracted.commodities
-                    WHERE api_response_status = 'data'
-                    GROUP BY commodity_name, interval
-                ) c2 ON c1.commodity_name = c2.commodity_name
-                     AND c1.interval = c2.interval
-                     AND c1.date = c2.max_date
-                ORDER BY c1.commodity_name, c1.interval
-            """
-            latest_results = db.fetch_query(latest_query)
-
-        print("\n" + "=" * 60)
-        print("COMMODITIES DATABASE SUMMARY")
-        print("=" * 60)
-
-        print("\nRecords by Status:")
-        if status_results:
-            for status, count in status_results:
-                print(f"  {status}: {count}")
-        else:
-            print("  No records found")
-
-        print("\nData Records by Commodity:")
-        if commodity_results:
-            for commodity, interval, count, earliest, latest in commodity_results:
-                print(
-                    f"  {commodity} ({interval}): {count} records from {earliest} to {latest}"
-                )
-        else:
-            print("  No data records found")
-
-        print("\nLatest Values:")
-        if latest_results:
-            for commodity, interval, date, value, unit in latest_results:
-                if value is not None:
-                    print(f"  {commodity} ({interval}): ${value:.2f} {unit} on {date}")
-                else:
-                    print(f"  {commodity} ({interval}): No value on {date}")
-        else:
-            print("  No latest values found")
-
-        print("=" * 60)
+            
+            print(f"\n🎯 Incremental extraction completed:")
+            print(f"  Functions processed: {results['functions_processed']}")
+            print(f"  Successful: {results['successful']}")
+            print(f"  No changes: {results['no_changes']}")
+            print(f"  Failed: {results['failed']}")
+            print(f"  Total records: {results['total_records']}")
+            
+            return results
 
 
 def main():
-    """Main function for commodities extraction."""
-
+    """Main execution function."""
+    parser = argparse.ArgumentParser(description="Commodities Extractor")
+    parser.add_argument("--functions", nargs="+", 
+                       help=f"Specific functions to process. Available: {list(COMMODITY_CONFIGS.keys())}")
+    parser.add_argument("--batch-size", type=int, default=5, 
+                       help="Number of functions to process in each batch (default: 5)")
+    
+    args = parser.parse_args()
+    
+    # Validate function names if provided
+    if args.functions:
+        invalid_functions = [f for f in args.functions if f not in COMMODITY_CONFIGS]
+        if invalid_functions:
+            print(f"Invalid function names: {invalid_functions}")
+            print(f"Available functions: {list(COMMODITY_CONFIGS.keys())}")
+            sys.exit(1)
+    
     extractor = CommoditiesExtractor()
-
-    # Configuration options for different use cases:
-
-    extractor.run_etl_with_daily_transform()
-
-    print("\nFinal Database Summary:")
-
-    time.sleep(0.1)
-    extractor.get_database_summary()
+    result = extractor.run_incremental_extraction(
+        function_list=args.functions,
+        batch_size=args.batch_size
+    )
+    
+    # Exit with appropriate code
+    if result["failed"] > 0 and result["successful"] == 0:
+        sys.exit(1)  # All failed
+    else:
+        sys.exit(0)  # Some or all successful
 
 
 if __name__ == "__main__":
     main()
+
+
+# Sample usage calls:
+# python extract_commodities.py
+# python extract_commodities.py --functions WTI BRENT NATURAL_GAS
+# python extract_commodities.py --batch-size 3
+
+# -----------------------------------------------------------------------------
+# Example commands (PowerShell):
+# 
+# Extract all commodities:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_commodities.py
+#
+# Extract specific commodities:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_commodities.py --functions WTI BRENT NATURAL_GAS
+#
+# Extract daily commodities only:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_commodities.py --functions WTI BRENT NATURAL_GAS
+#
+# Extract monthly commodities only:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_commodities.py --functions COPPER ALUMINUM WHEAT CORN COTTON SUGAR COFFEE ALL_COMMODITIES
+#
+# Smaller batch size for rate limiting:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_commodities.py --batch-size 3
+# -----------------------------------------------------------------------------

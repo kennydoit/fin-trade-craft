@@ -211,6 +211,43 @@ CREATE INDEX IF NOT EXISTS idx_source_balance_sheet_symbol_date ON source.balanc
 CREATE INDEX IF NOT EXISTS idx_source_balance_sheet_fetched_at ON source.balance_sheet(fetched_at);
 CREATE INDEX IF NOT EXISTS idx_source_balance_sheet_content_hash ON source.balance_sheet(content_hash);
 
+-- Time series daily adjusted table with modern schema
+CREATE TABLE IF NOT EXISTS source.time_series_daily_adjusted (
+    time_series_id SERIAL PRIMARY KEY,
+    symbol_id BIGINT NOT NULL,
+    symbol VARCHAR(20) NOT NULL,
+    date DATE NOT NULL,                        -- Trading date
+    
+    -- Business fields (price and volume data)
+    open DECIMAL(15,4),
+    high DECIMAL(15,4),
+    low DECIMAL(15,4),
+    close DECIMAL(15,4),
+    adjusted_close DECIMAL(15,4),
+    volume BIGINT,
+    dividend_amount DECIMAL(15,6),
+    split_coefficient DECIMAL(10,6),
+    
+    -- ETL metadata
+    api_response_status VARCHAR(20) NOT NULL,  -- 'pass', 'fail', 'empty'
+    content_hash VARCHAR(32) NOT NULL,         -- For change detection
+    source_run_id UUID NOT NULL,               -- Links to landing table
+    fetched_at TIMESTAMPTZ NOT NULL,           -- When API was called
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    -- Natural key constraint for idempotent upserts
+    UNIQUE(symbol_id, date),
+    
+    FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE
+);
+
+-- Indexes for time series
+CREATE INDEX IF NOT EXISTS idx_source_time_series_symbol_date ON source.time_series_daily_adjusted(symbol_id, date);
+CREATE INDEX IF NOT EXISTS idx_source_time_series_fetched_at ON source.time_series_daily_adjusted(fetched_at);
+CREATE INDEX IF NOT EXISTS idx_source_time_series_content_hash ON source.time_series_daily_adjusted(content_hash);
+CREATE INDEX IF NOT EXISTS idx_source_time_series_date ON source.time_series_daily_adjusted(date);
+
 CREATE INDEX IF NOT EXISTS idx_source_watermarks_table_symbol ON source.extraction_watermarks(table_name, symbol_id);
 CREATE INDEX IF NOT EXISTS idx_source_watermarks_last_run ON source.extraction_watermarks(last_successful_run);
 
@@ -223,3 +260,5 @@ COMMENT ON TABLE source.extraction_watermarks IS 'Tracks processing progress for
 COMMENT ON TABLE source.api_responses_landing IS 'Audit trail of raw API responses';
 COMMENT ON TABLE source.cash_flow IS 'Clean cash flow data with deterministic natural keys';
 COMMENT ON TABLE source.balance_sheet IS 'Clean balance sheet data with deterministic natural keys';
+COMMENT ON TABLE source.income_statement IS 'Clean income statement data with deterministic natural keys';
+COMMENT ON TABLE source.time_series_daily_adjusted IS 'Clean daily time series data with deterministic natural keys';

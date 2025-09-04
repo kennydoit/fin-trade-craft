@@ -26,22 +26,22 @@ API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
 # Schema-driven field mapping configuration
 CASH_FLOW_FIELDS = {
-    'symbol_id': 'symbol_id',
-    'symbol': 'symbol',
-    'fiscal_date_ending': 'fiscalDateEnding',
-    'report_type': 'report_type',
-    'reported_currency': 'reportedCurrency',
+    # Operating Activities
     'operating_cashflow': 'operatingCashflow',
     'payments_for_operating_activities': 'paymentsForOperatingActivities',
     'proceeds_from_operating_activities': 'proceedsFromOperatingActivities',
     'change_in_operating_liabilities': 'changeInOperatingLiabilities',
     'change_in_operating_assets': 'changeInOperatingAssets',
     'depreciation_depletion_and_amortization': 'depreciationDepletionAndAmortization',
-    'capital_expenditures': 'capitalExpenditures',
     'change_in_receivables': 'changeInReceivables',
     'change_in_inventory': 'changeInInventory',
     'profit_loss': 'profitLoss',
+    
+    # Investing Activities
     'cashflow_from_investment': 'cashflowFromInvestment',
+    'capital_expenditures': 'capitalExpenditures',
+    
+    # Financing Activities
     'cashflow_from_financing': 'cashflowFromFinancing',
     'proceeds_from_repayments_of_short_term_debt': 'proceedsFromRepaymentsOfShortTermDebt',
     'payments_for_repurchase_of_common_stock': 'paymentsForRepurchaseOfCommonStock',
@@ -55,6 +55,8 @@ CASH_FLOW_FIELDS = {
     'proceeds_from_issuance_of_preferred_stock': 'proceedsFromIssuanceOfPreferredStock',
     'proceeds_from_repurchase_of_equity': 'proceedsFromRepurchaseOfEquity',
     'proceeds_from_sale_of_treasury_stock': 'proceedsFromSaleOfTreasuryStock',
+    
+    # Summary
     'change_in_cash_and_cash_equivalents': 'changeInCashAndCashEquivalents',
 }
 
@@ -248,14 +250,12 @@ class CashFlowExtractor:
             
             # Map API fields to database fields using schema-driven approach
             for db_field, api_field in CASH_FLOW_FIELDS.items():
-                if db_field in ["symbol_id", "symbol", "report_type"]:
-                    # These are already set
-                    continue
-                elif api_field == 'fiscalDateEnding':
-                    # Use deterministic date parsing
-                    record[db_field] = DateUtils.parse_fiscal_date(report.get(api_field))
-                elif api_field in report:
+                if api_field in report:
                     record[db_field] = convert_value(report.get(api_field))
+            
+            # Handle special fields not in the main mapping
+            record["fiscal_date_ending"] = DateUtils.parse_fiscal_date(report.get("fiscalDateEnding"))
+            record["reported_currency"] = report.get("reportedCurrency")
             
             # Validate required fields
             if not record["fiscal_date_ending"]:
