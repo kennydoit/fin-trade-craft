@@ -338,9 +338,9 @@ class WatermarkManager:
             base_query += f" AND ls.asset_type IN ({placeholders})"
             params.extend(asset_type_filter)
         else:
-            # Default to Stock if no filter provided
-            base_query += " AND ls.asset_type = %s"
-            params.append('Stock')
+            # Default to Stock and ETF if no filter provided
+            base_query += " AND ls.asset_type IN (%s, %s)"
+            params.extend(['Stock', 'ETF'])
         
         # Add exchange filter
         if exchange_filter:

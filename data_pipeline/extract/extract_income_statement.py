@@ -11,6 +11,7 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+from decimal import Decimal
 
 import requests
 from dotenv import load_dotenv
@@ -26,35 +27,39 @@ API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
 # Schema-driven field mapping configuration
 INCOME_STATEMENT_FIELDS = {
-    'symbol_id': 'symbol_id',
-    'symbol': 'symbol',
-    'fiscal_date_ending': 'fiscalDateEnding',
-    'report_type': 'report_type',
-    'reported_currency': 'reportedCurrency',
-    'gross_profit': 'grossProfit',
+    # Revenue and Cost Fields
     'total_revenue': 'totalRevenue',
     'cost_of_revenue': 'costOfRevenue',
     'cost_of_goods_and_services_sold': 'costofGoodsAndServicesSold',
+    'gross_profit': 'grossProfit',
+    
+    # Operating Fields
     'operating_income': 'operatingIncome',
+    'operating_expenses': 'operatingExpenses',
     'selling_general_and_administrative': 'sellingGeneralAndAdministrative',
     'research_and_development': 'researchAndDevelopment',
-    'operating_expenses': 'operatingExpenses',
+    'depreciation': 'depreciation',
+    'depreciation_and_amortization': 'depreciationAndAmortization',
+    
+    # Interest and Investment Fields
     'investment_income_net': 'investmentIncomeNet',
     'net_interest_income': 'netInterestIncome',
     'interest_income': 'interestIncome',
     'interest_expense': 'interestExpense',
+    'interest_and_debt_expense': 'interestAndDebtExpense',
     'non_interest_income': 'nonInterestIncome',
     'other_non_operating_income': 'otherNonOperatingIncome',
-    'depreciation': 'depreciation',
-    'depreciation_and_amortization': 'depreciationAndAmortization',
+    
+    # Tax and Final Income Fields
     'income_before_tax': 'incomeBeforeTax',
     'income_tax_expense': 'incomeTaxExpense',
-    'interest_and_debt_expense': 'interestAndDebtExpense',
     'net_income_from_continuing_operations': 'netIncomeFromContinuingOperations',
     'comprehensive_income_net_of_tax': 'comprehensiveIncomeNetOfTax',
+    'net_income': 'netIncome',
+    
+    # Performance Metrics
     'ebit': 'ebit',
     'ebitda': 'ebitda',
-    'net_income': 'netIncome',
 }
 
 
@@ -102,7 +107,7 @@ class IncomeStatementExtractor:
     
     def _fetch_api_data(self, symbol: str) -> tuple[Dict[str, Any], str]:
         """
-        Fetch cash flow data from Alpha Vantage API.
+        Fetch income statement data from Alpha Vantage API.
         
         Args:
             symbol: Stock symbol to fetch
@@ -210,7 +215,7 @@ class IncomeStatementExtractor:
                                 report: Dict[str, Any], report_type: str, 
                                 run_id: str) -> Optional[Dict[str, Any]]:
         """
-        Transform a single cash flow report.
+        Transform a single income statement report.
         
         Args:
             symbol: Stock symbol
@@ -241,20 +246,18 @@ class IncomeStatementExtractor:
                 if value is None or value == "None" or value == "":
                     return None
                 try:
-                    return float(value)
+                    return Decimal(str(value))
                 except (ValueError, TypeError):
                     return None
             
             # Map API fields to database fields using schema-driven approach
             for db_field, api_field in INCOME_STATEMENT_FIELDS.items():
-                if db_field in ["symbol_id", "symbol", "report_type"]:
-                    # These are already set
-                    continue
-                elif api_field == 'fiscalDateEnding':
-                    # Use deterministic date parsing
-                    record[db_field] = DateUtils.parse_fiscal_date(report.get(api_field))
-                elif api_field in report:
+                if api_field in report:
                     record[db_field] = convert_value(report.get(api_field))
+            
+            # Handle special fields not in the main mapping
+            record["fiscal_date_ending"] = DateUtils.parse_fiscal_date(report.get("fiscalDateEnding"))
+            record["reported_currency"] = report.get("reportedCurrency")
             
             # Validate required fields
             if not record["fiscal_date_ending"]:
@@ -292,7 +295,7 @@ class IncomeStatementExtractor:
     
     def _upsert_records(self, db, records: List[Dict[str, Any]]) -> int:
         """
-        Upsert records into the cash flow table.
+        Upsert records into the income statement table.
         
         Args:
             db: Database manager
@@ -306,7 +309,7 @@ class IncomeStatementExtractor:
         
         # Get column names (excluding auto-generated ones)
         columns = [col for col in records[0].keys() 
-                  if col not in ['cash_flow_id', 'created_at', 'updated_at']]
+                  if col not in ['income_statement_id', 'created_at', 'updated_at']]
         
         # Build upsert query
         placeholders = ", ".join(["%s" for _ in columns])
@@ -336,7 +339,7 @@ class IncomeStatementExtractor:
     
     def extract_symbol(self, symbol: str, symbol_id: int, db) -> Dict[str, Any]:
         """
-        Extract cash flow data for a single symbol.
+        Extract income statement data for a single symbol.
         
         Args:
             symbol: Stock symbol

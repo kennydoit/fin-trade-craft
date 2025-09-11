@@ -219,11 +219,11 @@ CREATE TABLE IF NOT EXISTS source.time_series_daily_adjusted (
     date DATE NOT NULL,                        -- Trading date
     
     -- Business fields (price and volume data)
-    open DECIMAL(15,4),
-    high DECIMAL(15,4),
-    low DECIMAL(15,4),
-    close DECIMAL(15,4),
-    adjusted_close DECIMAL(15,4),
+    open DECIMAL(28,8),
+    high DECIMAL(28,8),
+    low DECIMAL(28,8),
+    close DECIMAL(28,8),
+    adjusted_close DECIMAL(28,8),
     volume BIGINT,
     dividend_amount DECIMAL(15,6),
     split_coefficient DECIMAL(10,6),
