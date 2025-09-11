@@ -1,810 +1,334 @@
 """
-Extract earnings call transcripts data from Alpha Vantage API and load into database.
+Earnings Call Transcripts Extractor using modern incremental ETL architecture.
+Uses source schema, watermarks, content hashing, and deterministic processing.
 """
 
-import argparse
-import hashlib
 import os
 import sys
 import time
+import json
+import argparse
+import hashlib
 from datetime import datetime, date
 from pathlib import Path
+from typing import Dict, List, Any, Optional
+from decimal import Decimal
 
 import requests
 from dotenv import load_dotenv
 
-# Add the parent directories to the path so we can import from db
+# Add the parent directories to the path so we can import from db and utils
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
 
-# -----------------------------------------------------------------------------
-# Example commands (PowerShell):
-# 
-# Incremental update (default) - processes only missing quarters:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py
-# 
-# Process specific exchange:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --exchange NASDAQ --limit 100
-# 
-# Dry run to estimate API calls:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --dry-run --exchange NYSE --limit 50
-#
-# Full replacement (re-processes all symbols):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --mode replace --limit 10
-# -----------------------------------------------------------------------------
-
+# API configuration
 STOCK_API_FUNCTION = "EARNINGS_CALL_TRANSCRIPT"
+API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
+TABLE_NAME = "earnings_call_transcripts"
 
 class EarningsCallTranscriptsExtractor:
-    """Extract and load earnings call transcripts data from Alpha Vantage API."""
-
-    def __init__(self, mode="update", retry_failed=False):
-        """Initialize the extractor with specified mode and retry options.
+    """Modern earnings call transcripts extractor with watermarks and incremental processing."""
+    
+    def __init__(self, db_manager: PostgresDatabaseManager):
+        """
+        Initialize the extractor.
         
         Args:
-            mode (str): Operation mode - "update" for incremental updates (default), "replace" for full replacement
-            retry_failed (bool): Whether to retry previously failed symbols (default: False)
+            db_manager: Database connection manager
         """
-        if mode not in ["replace", "update"]:
-            raise ValueError("Mode must be 'replace' or 'update'")
+        self.db = db_manager
+        self.watermark_manager = WatermarkManager(db_manager)
+        self.run_id = RunIdGenerator.generate()
         
-        self.mode = mode
-        self.retry_failed = retry_failed
-        
-        # Load ALPHAVANTAGE_API_KEY from .env file
+        # Load API key
         load_dotenv()
         self.api_key = os.getenv('ALPHAVANTAGE_API_KEY')
-
         if not self.api_key:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
-
-        self.db_manager = PostgresDatabaseManager()
+        
         self.base_url = "https://www.alphavantage.co/query"
-
-        # Rate limiting: 75 requests per minute for Alpha Vantage Premium
-        self.rate_limit_delay = 0.8  # seconds between requests (75/min = 0.8s delay)
-
+        
+        # Ensure source table exists
+        self._ensure_source_table_exists()
+        
+        # Ensure watermarks table exists
+        self._ensure_watermarks_table_exists()
+        
         # Precompute quarters from current quarter back to 2010Q1
-        self.quarters = []
+        self.quarters = self._generate_quarters()
+        print(f"Initialized with {len(self.quarters)} quarters from {self.quarters[0]} to {self.quarters[-1]}")
+    
+    def _ensure_source_table_exists(self):
+        """Ensure the source.earnings_call_transcripts table exists."""
+        create_table_sql = """
+            CREATE SCHEMA IF NOT EXISTS source;
+            
+            CREATE TABLE IF NOT EXISTS source.earnings_call_transcripts (
+                transcript_id       SERIAL PRIMARY KEY,
+                symbol_id           INTEGER NOT NULL,
+                symbol              VARCHAR(20) NOT NULL,
+                quarter             VARCHAR(10) NOT NULL,  -- Format: YYYYQM (e.g., 2024Q1)
+                speaker             VARCHAR(255) NOT NULL,
+                title               VARCHAR(255),
+                content             TEXT NOT NULL,
+                content_hash        VARCHAR(32) NOT NULL,  -- MD5 hash of content for uniqueness
+                sentiment           DECIMAL(5,3),  -- Sentiment score (e.g., 0.6, 0.7)
+                api_response_status VARCHAR(20) DEFAULT 'pass',
+                source_run_id       VARCHAR(36) NOT NULL,
+                fetched_at          TIMESTAMP DEFAULT NOW(),
+                created_at          TIMESTAMP DEFAULT NOW(),
+                updated_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE,
+                UNIQUE(symbol_id, quarter, speaker, content_hash)  -- Use hash instead of full content
+            );
+
+            -- Create indexes for earnings call transcripts
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol_id ON source.earnings_call_transcripts(symbol_id);
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol ON source.earnings_call_transcripts(symbol);
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON source.earnings_call_transcripts(quarter);
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON source.earnings_call_transcripts(speaker);
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON source.earnings_call_transcripts(sentiment);
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_content_hash ON source.earnings_call_transcripts(content_hash);
+            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_run_id ON source.earnings_call_transcripts(source_run_id);
+        """
+        
+        # Create trigger for updated_at
+        trigger_sql = """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger 
+                    WHERE tgname = 'update_earnings_call_transcripts_updated_at'
+                    AND tgrelid = 'source.earnings_call_transcripts'::regclass
+                ) THEN
+                    CREATE TRIGGER update_earnings_call_transcripts_updated_at 
+                    BEFORE UPDATE ON source.earnings_call_transcripts 
+                    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+                END IF;
+            END $$;
+        """
+        
+        try:
+            self.db.execute_query(create_table_sql)
+            self.db.execute_query(trigger_sql)
+            print("✓ Ensured source.earnings_call_transcripts table exists")
+        except Exception as e:
+            print(f"Warning: Could not create table/trigger: {e}")
+    
+    def _ensure_watermarks_table_exists(self):
+        """Ensure the source.extraction_watermarks table exists."""
+        create_watermarks_sql = """
+            CREATE TABLE IF NOT EXISTS source.extraction_watermarks (
+                watermark_id        SERIAL PRIMARY KEY,
+                table_name          VARCHAR(100) NOT NULL,
+                symbol_id           INTEGER NOT NULL,
+                last_fiscal_date    DATE,
+                last_successful_run TIMESTAMP,
+                consecutive_failures INTEGER DEFAULT 0,
+                created_at          TIMESTAMP DEFAULT NOW(),
+                updated_at          TIMESTAMP DEFAULT NOW(),
+                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE,
+                UNIQUE(table_name, symbol_id)
+            );
+            
+            CREATE INDEX IF NOT EXISTS idx_extraction_watermarks_table_symbol ON source.extraction_watermarks(table_name, symbol_id);
+            CREATE INDEX IF NOT EXISTS idx_extraction_watermarks_last_run ON source.extraction_watermarks(last_successful_run);
+        """
+        
+        trigger_sql = """
+            DO $$ 
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_trigger 
+                    WHERE tgname = 'update_extraction_watermarks_updated_at'
+                    AND tgrelid = 'source.extraction_watermarks'::regclass
+                ) THEN
+                    CREATE TRIGGER update_extraction_watermarks_updated_at 
+                    BEFORE UPDATE ON source.extraction_watermarks 
+                    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+                END IF;
+            END $$;
+        """
+        
+        try:
+            self.db.execute_query(create_watermarks_sql)
+            self.db.execute_query(trigger_sql)
+            print("✓ Ensured source.extraction_watermarks table exists")
+        except Exception as e:
+            print(f"Warning: Could not create watermarks table/trigger: {e}")
+    
+    def _generate_quarters(self) -> List[str]:
+        """Generate quarters from current quarter back to 2010Q1."""
+        quarters = []
         current = datetime.now()
         current_year = current.year
         current_quarter = (current.month - 1) // 3 + 1
+        
         for year in range(current_year, 2009, -1):
             if year == current_year:
                 quarters_range = range(current_quarter, 0, -1)
             else:
                 quarters_range = range(4, 0, -1)
             for quarter in quarters_range:
-                self.quarters.append(f"{year}Q{quarter}")
-
-        if self.quarters:
-            print(
-                f"Initialized with {len(self.quarters)} quarters from {self.quarters[0]} to {self.quarters[-1]}"
-            )
-
-    def load_valid_symbols(self, exchange_filter=None, limit=None):
-        """Load valid stock symbols from the database with their symbol_ids."""
-        with self.db_manager as db:
-            base_query = "SELECT symbol_id, symbol FROM listing_status WHERE asset_type = 'Stock'"
-            params = []
-
-            if exchange_filter:
-                if isinstance(exchange_filter, list):
-                    placeholders = ','.join(['%s' for _ in exchange_filter])
-                    base_query += f" AND exchange IN ({placeholders})"
-                    params.extend(exchange_filter)
-                else:
-                    base_query += " AND exchange = %s"
-                    params.append(exchange_filter)
-
-            if limit:
-                base_query += " LIMIT %s"
-                params.append(limit)
-
-            result = db.fetch_query(base_query, params)
-            return {row[1]: row[0] for row in result}
-
-    def load_unprocessed_symbols_with_db(self, db, exchange_filter=None, limit=None):
-        """Load unprocessed symbols with IPO and listing status information."""
-        # First ensure the table exists, or create just the table
-        if not db.table_exists('extracted.earnings_call_transcripts'):
-            # Create just the earnings_call_transcripts table in extracted schema
-            create_table_sql = """
-                CREATE TABLE IF NOT EXISTS extracted.earnings_call_transcripts (
-                    transcript_id       SERIAL PRIMARY KEY,
-                    symbol_id           INTEGER NOT NULL,
-                    symbol              VARCHAR(20) NOT NULL,
-                    quarter             VARCHAR(10) NOT NULL,
-                    speaker             VARCHAR(255) NOT NULL,
-                    title               VARCHAR(255),
-                    content             TEXT NOT NULL,
-                    content_hash        VARCHAR(32) NOT NULL,
-                    sentiment           DECIMAL(5,3),
-                    api_response_status VARCHAR(20) DEFAULT 'pass',
-                    created_at          TIMESTAMP DEFAULT NOW(),
-                    updated_at          TIMESTAMP DEFAULT NOW(),
-                    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE,
-                    UNIQUE(symbol_id, quarter, speaker, content_hash)
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol_id ON extracted.earnings_call_transcripts(symbol_id);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol ON extracted.earnings_call_transcripts(symbol);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON extracted.earnings_call_transcripts(quarter);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON extracted.earnings_call_transcripts(speaker);
-                CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON extracted.earnings_call_transcripts(sentiment);
-            """
-
-            # Create trigger separately if the update function exists
-            trigger_sql = """
-                DO $$
-                BEGIN
-                    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_updated_at_column') THEN
-                        CREATE TRIGGER update_earnings_call_transcripts_updated_at 
-                        BEFORE UPDATE ON extracted.earnings_call_transcripts 
-                        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-                    END IF;
-                EXCEPTION WHEN others THEN
-                    -- Trigger may already exist, ignore error
-                END $$;
-            """
-
-            try:
-                db.execute_query(create_table_sql)
-                print("Created extracted.earnings_call_transcripts table")
-                # Try to create trigger separately
-                try:
-                    db.execute_query(trigger_sql)
-                    print("Created extracted.earnings_call_transcripts trigger")
-                except Exception as te:
-                    print(f"Note: Could not create trigger (may already exist): {te}")
-            except Exception as e:
-                print(f"Warning: Could not create extracted.earnings_call_transcripts table: {e}")
-
-        # Now query for unprocessed symbols with their IPO dates and status info
-        base_query = """
-            SELECT ls.symbol_id, ls.symbol, ls.ipo_date, ls.status, ls.delisting_date
-            FROM listing_status ls
-            LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id
-            WHERE ls.asset_type = 'Stock' AND ect.symbol_id IS NULL
+                quarters.append(f"{year}Q{quarter}")
+        
+        return quarters
+    
+    def get_symbols_needing_processing(self, 
+                                     staleness_hours: int = 24,
+                                     max_failures: int = 3,
+                                     limit: Optional[int] = None,
+                                     exchange_filter: Optional[List[str]] = None) -> List[Dict[str, Any]]:
         """
-        params = []
-
-        if exchange_filter:
-            if isinstance(exchange_filter, list):
-                placeholders = ','.join(['%s' for _ in exchange_filter])
-                base_query += f" AND ls.exchange IN ({placeholders})"
-                params.extend(exchange_filter)
-            else:
-                base_query += " AND ls.exchange = %s"
-                params.append(exchange_filter)
-
-        base_query += " GROUP BY ls.symbol_id, ls.symbol, ls.ipo_date, ls.status, ls.delisting_date"
-
-        if limit:
-            base_query += " LIMIT %s"
-            params.append(limit)
-
-        result = db.fetch_query(base_query, params)
-        # Return dictionary with symbol as key and tuple of (symbol_id, ipo_date, status, delisting_date)
-        return {row[1]: (row[0], row[2], row[3], row[4]) for row in result}
-
-    def get_failed_symbols(self, db, exchange_filter=None):
-        """Get symbols that have failed extractions (4+ consecutive no_data or error quarters)."""
-        # A symbol is considered "failed" if it has 4+ consecutive quarters with no_data/error status
-        # and no successful quarters after the failures
-        query = """
-        WITH symbol_quarters AS (
-            SELECT 
-                symbol_id,
-                symbol,
-                quarter,
-                api_response_status,
-                ROW_NUMBER() OVER (PARTITION BY symbol_id ORDER BY 
-                    CAST(SUBSTRING(quarter, 1, 4) AS INTEGER) DESC,
-                    CAST(SUBSTRING(quarter, 6, 1) AS INTEGER) DESC
-                ) as quarter_rank
-            FROM extracted.earnings_call_transcripts ect
-            WHERE api_response_status IN ('no_data', 'error')
-        ),
-        consecutive_failures AS (
-            SELECT 
-                symbol_id,
-                symbol,
-                COUNT(*) as consecutive_fails
-            FROM symbol_quarters
-            WHERE quarter_rank <= 4  -- Check most recent 4 quarters
-            GROUP BY symbol_id, symbol
-            HAVING COUNT(*) >= 4  -- 4 or more consecutive failures
-        ),
-        symbols_with_success AS (
-            SELECT DISTINCT symbol_id
-            FROM extracted.earnings_call_transcripts
-            WHERE api_response_status = 'pass'
-        )
-        SELECT cf.symbol_id, cf.symbol
-        FROM consecutive_failures cf
-        LEFT JOIN symbols_with_success sws ON cf.symbol_id = sws.symbol_id
-        WHERE sws.symbol_id IS NULL  -- No successful quarters
-        """
-        
-        if exchange_filter:
-            query += """
-            AND cf.symbol_id IN (
-                SELECT symbol_id FROM extracted.listing_status 
-                WHERE asset_type = 'Stock' 
-            """
-            
-            if isinstance(exchange_filter, list):
-                placeholders = ','.join(['%s' for _ in exchange_filter])
-                query += f" AND exchange IN ({placeholders})"
-                result = db.fetch_query(query + ")", exchange_filter)
-            else:
-                query += " AND exchange = %s"
-                result = db.fetch_query(query + ")", [exchange_filter])
-        else:
-            result = db.fetch_query(query)
-        
-        return set(row[0] for row in result) if result else set()
-
-    def load_symbols_for_processing(self, db, exchange_filter=None, limit=None):
-        """Load symbols for processing based on mode and retry_failed setting."""
-        if self.mode == "replace":
-            symbol_mapping = self.load_valid_symbols_for_replacement(db, exchange_filter, limit)
-        else:
-            symbol_mapping = self.load_unprocessed_symbols_with_db(db, exchange_filter, limit)
-        
-        # Apply retry_failed filtering
-        if not self.retry_failed:
-            # Exclude failed symbols
-            failed_symbol_ids = self.get_failed_symbols(db, exchange_filter)
-            if failed_symbol_ids:
-                print(f"🚫 Excluding {len(failed_symbol_ids)} previously failed symbols (use --retry-failed to include them)")
-                # Filter out failed symbols
-                symbol_mapping = {
-                    symbol: data for symbol, data in symbol_mapping.items() 
-                    if data[0] not in failed_symbol_ids  # data[0] is symbol_id
-                }
-        else:
-            failed_symbol_ids = self.get_failed_symbols(db, exchange_filter)
-            if failed_symbol_ids:
-                print(f"🔄 Including {len(failed_symbol_ids)} previously failed symbols for retry")
-        
-        return symbol_mapping
-
-    def load_valid_symbols_for_replacement(self, db, exchange_filter=None, limit=None):
-        """Load all valid symbols for replacement mode (ignores existing data)."""
-        base_query = "SELECT symbol_id, symbol, ipo_date, status, delisting_date FROM extracted.listing_status WHERE asset_type = 'Stock'"
-        params = []
-
-        if exchange_filter:
-            if isinstance(exchange_filter, list):
-                placeholders = ','.join(['%s' for _ in exchange_filter])
-                base_query += f" AND exchange IN ({placeholders})"
-                params.extend(exchange_filter)
-            else:
-                base_query += " AND exchange = %s"
-                params.append(exchange_filter)
-
-        if limit:
-            base_query += " LIMIT %s"
-            params.append(limit)
-
-        result = db.fetch_query(base_query, params)
-        return {row[1]: (row[0], row[2], row[3], row[4]) for row in result}
-
-    def get_existing_quarters_for_symbol(self, db, symbol_id):
-        """Get quarters that already have data for a symbol."""
-        if self.mode == "replace":
-            return set()  # In replace mode, ignore existing data
-            
-        query = """
-        SELECT DISTINCT quarter 
-        FROM extracted.earnings_call_transcripts 
-        WHERE symbol_id = %s AND api_response_status IN ('pass', 'no_data', 'error')
-        """
-        
-        result = db.fetch_query(query, (symbol_id,))
-        return set(row[0] for row in result) if result else set()
-
-    def calculate_api_calls_needed(self, db, exchange_filter=None, limit=None):
-        """Calculate how many API calls would be needed for the current run."""
-        print("🧮 Calculating API calls needed...")
-        
-        # Load symbols that would be processed
-        symbol_mapping = self.load_symbols_for_processing(db, exchange_filter, limit)
-        symbols = list(symbol_mapping.keys())
-        
-        if not symbols:
-            print("No symbols found for processing")
-            return 0, {}
-        
-        total_calls = 0
-        symbol_breakdown = {}
-        
-        for symbol in symbols:
-            symbol_id, ipo_date, status, delisting_date = symbol_mapping[symbol]
-            
-            # Get quarters for this symbol
-            symbol_quarters = self.get_quarters_for_symbol(ipo_date, delisting_date)
-            
-            # Get existing quarters (empty set for replace mode)
-            existing_quarters = self.get_existing_quarters_for_symbol(db, symbol_id)
-            
-            # Calculate missing quarters
-            missing_quarters = [q for q in symbol_quarters if q not in existing_quarters]
-            
-            calls_for_symbol = len(missing_quarters)
-            total_calls += calls_for_symbol
-            
-            if calls_for_symbol > 0:
-                symbol_breakdown[symbol] = {
-                    'total_quarters': len(symbol_quarters),
-                    'existing_quarters': len(existing_quarters),
-                    'missing_quarters': calls_for_symbol,
-                    'quarters_list': missing_quarters[:5] + (['...'] if len(missing_quarters) > 5 else [])
-                }
-        
-        return total_calls, symbol_breakdown
-        """Get count of remaining unprocessed symbols using provided database connection."""
-        base_query = """
-            SELECT COUNT(DISTINCT ls.symbol_id)
-            FROM listing_status ls 
-            LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
-            WHERE ls.asset_type = 'Stock' AND ect.symbol_id IS NULL
-        """
-        params = []
-
-        if exchange_filter:
-            if isinstance(exchange_filter, list):
-                placeholders = ','.join(['%s' for _ in exchange_filter])
-                base_query += f" AND ls.exchange IN ({placeholders})"
-                params.extend(exchange_filter)
-            else:
-                base_query += " AND ls.exchange = %s"
-                params.append(exchange_filter)
-
-        return db.fetch_query(base_query, params)[0][0]
-
-    def extract_single_earnings_call_transcript(self, symbol, quarter):
-        """Extract earnings call transcript data for a single symbol and quarter."""
-        print(f"Processing TICKER: {symbol}, QUARTER: {quarter}")
-
-        url = f'{self.base_url}?function={STOCK_API_FUNCTION}&symbol={symbol}&quarter={quarter}&apikey={self.api_key}'
-        print(f"Fetching data from: {url}")
-
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-
-            print(f"Response status: {response.status_code}")
-            data = response.json()
-
-            # Check for API errors
-            if 'Error Message' in data:
-                print(f"API Error for {symbol} {quarter}: {data['Error Message']}")
-                return None, 'fail'
-
-            if 'Note' in data:
-                print(f"API Note for {symbol} {quarter}: {data['Note']}")
-                return None, 'fail'
-
-            # Check if we have transcript data
-            if 'transcript' not in data or not data['transcript']:
-                print(f"No earnings call transcript data found for {symbol} {quarter}")
-                return None, 'no_data'
-
-            print(f"Successfully fetched {len(data['transcript'])} transcript entries for {symbol} {quarter}")
-            return data, 'pass'
-
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching data for {symbol} {quarter}: {e}")
-            return None, 'fail'
-        except Exception as e:
-            print(f"Unexpected error for {symbol} {quarter}: {e}")
-            return None, 'fail'
-
-    def transform_earnings_call_transcript_data(self, symbol, symbol_id, quarter, data, status):
-        """Transform earnings call transcript data to match database schema."""
-        current_timestamp = datetime.now().isoformat()
-
-        if status == 'no_data':
-            # Create no data record
-            return [{
-                'symbol_id': symbol_id,
-                'symbol': symbol,
-                'quarter': quarter,
-                'speaker': 'NO_DATA',
-                'title': None,
-                'content': 'No transcript data available',
-                'content_hash': hashlib.md5(b'No transcript data available').hexdigest(),
-                'sentiment': None,
-                'api_response_status': 'no_data',
-                'created_at': current_timestamp,
-                'updated_at': current_timestamp
-            }]
-
-        if status == 'fail' or data is None:
-            # Create error record
-            return [{
-                'symbol_id': symbol_id,
-                'symbol': symbol,
-                'quarter': quarter,
-                'speaker': 'ERROR',
-                'title': None,
-                'content': 'API Error',
-                'content_hash': hashlib.md5(b'API Error').hexdigest(),
-                'sentiment': None,
-                'api_response_status': 'error',
-                'created_at': current_timestamp,
-                'updated_at': current_timestamp
-            }]
-
-        try:
-            records = []
-
-            for transcript_entry in data['transcript']:
-                # Helper function to convert sentiment values
-                def convert_sentiment(value):
-                    if value is None or value == '' or value == 'None':
-                        return None
-                    try:
-                        return float(value)
-                    except (ValueError, TypeError):
-                        return None
-
-                record = {
-                    'symbol_id': symbol_id,
-                    'symbol': symbol,
-                    'quarter': quarter,
-                    'speaker': transcript_entry.get('speaker', 'Unknown'),
-                    'title': transcript_entry.get('title'),
-                    'content': transcript_entry.get('content', ''),
-                    'content_hash': hashlib.md5(transcript_entry.get('content', '').encode()).hexdigest(),
-                    'sentiment': convert_sentiment(transcript_entry.get('sentiment')),
-                    'api_response_status': 'pass',
-                    'created_at': current_timestamp,
-                    'updated_at': current_timestamp
-                }
-
-                records.append(record)
-
-            print(f"Transformed {len(records)} transcript records for {symbol} {quarter}")
-            return records
-
-        except Exception as e:
-            print(f"Error transforming data for {symbol} {quarter}: {e}")
-            return []
-
-    def load_earnings_call_transcript_data_with_db(self, db_manager, records):
-        """Load earnings call transcript records into the database using provided database manager."""
-        if not records:
-            print("No records to load")
-            return
-
-        print(f"Loading {len(records)} records into database...")
-
-        # The table should already exist from load_unprocessed_symbols_with_db
-        if not db_manager.table_exists('extracted.earnings_call_transcripts'):
-            print("Warning: extracted.earnings_call_transcripts table doesn't exist, creating it...")
-            # Create just the earnings_call_transcripts table in extracted schema
-            create_table_sql = """
-                CREATE TABLE IF NOT EXISTS extracted.earnings_call_transcripts (
-                    transcript_id       SERIAL PRIMARY KEY,
-                    symbol_id           INTEGER NOT NULL,
-                    symbol              VARCHAR(20) NOT NULL,
-                    quarter             VARCHAR(10) NOT NULL,
-                    speaker             VARCHAR(255) NOT NULL,
-                    title               VARCHAR(255),
-                    content             TEXT NOT NULL,
-                    content_hash        VARCHAR(32) NOT NULL,
-                    sentiment           DECIMAL(5,3),
-                    api_response_status VARCHAR(20) DEFAULT 'pass',
-                    created_at          TIMESTAMP DEFAULT NOW(),
-                    updated_at          TIMESTAMP DEFAULT NOW(),
-                    FOREIGN KEY (symbol_id) REFERENCES listing_status(symbol_id) ON DELETE CASCADE,
-                    UNIQUE(symbol_id, quarter, speaker, content_hash)
-                );
-            """
-            db_manager.execute_query(create_table_sql)
-
-        # Prepare insert query using PostgreSQL syntax
-        columns = list(records[0].keys())
-        placeholders = ', '.join(['%s' for _ in columns])
-        insert_query = f"""
-            INSERT INTO extracted.earnings_call_transcripts ({', '.join(columns)}) 
-            VALUES ({placeholders})
-            ON CONFLICT (symbol_id, quarter, speaker, content_hash) 
-            DO UPDATE SET
-                title = EXCLUDED.title,
-                content = EXCLUDED.content,
-                sentiment = EXCLUDED.sentiment,
-                api_response_status = EXCLUDED.api_response_status,
-                updated_at = EXCLUDED.updated_at
-        """
-
-        # Convert records to list of tuples
-        record_tuples = [tuple(record[col] for col in columns) for record in records]
-
-        # Execute bulk insert
-        rows_affected = db_manager.execute_many(insert_query, record_tuples)
-        print(f"Successfully loaded {rows_affected} records into extracted.earnings_call_transcripts table")
-
-    def run_etl_incremental(self, exchange_filter=None, limit=None, dry_run=False):
-        """Run ETL for earnings call transcripts.
+        Get symbols that need earnings call transcript processing.
         
         Args:
-            exchange_filter: Filter by exchange (e.g., 'NASDAQ', 'NYSE')
-            limit: Maximum number of symbols to process (for chunking)
-            dry_run: If True, only calculate and display API call estimates
+            staleness_hours: Hours before data is considered stale
+            max_failures: Maximum consecutive failures before giving up
+            limit: Maximum number of symbols to return
+            exchange_filter: Filter by exchanges (e.g., ['NASDAQ', 'NYSE'])
+            
+        Returns:
+            List of symbol data needing processing
         """
-        mode_desc = "REPLACE (re-process all)" if self.mode == "replace" else "UPDATE (process missing only)"
-        retry_desc = "INCLUDE failed" if self.retry_failed else "EXCLUDE failed"
-        print(f"Starting Earnings Call Transcripts ETL process in {mode_desc} mode...")
-        print(f"Failed symbol handling: {retry_desc}")
-        print(f"Configuration: exchange={exchange_filter}, limit={limit}, dry_run={dry_run}")
-
-        try:
-            # Use a fresh database manager for this ETL run
-            db_manager = PostgresDatabaseManager()
-            with db_manager as db:
-                # Ensure table exists first
-                if not db.table_exists('extracted.earnings_call_transcripts'):
-                    self.create_earnings_call_transcripts_table(db)
-                
-                # Calculate API calls needed
-                total_api_calls, symbol_breakdown = self.calculate_api_calls_needed(db, exchange_filter, limit)
-                
-                # Display dry-run results
-                if dry_run:
-                    self.display_dry_run_results(total_api_calls, symbol_breakdown, exchange_filter, limit)
-                    return
-                
-                # Load symbols for processing
-                symbol_mapping = self.load_symbols_for_processing(db, exchange_filter, limit)
-                symbols = list(symbol_mapping.keys())
-                print(f"Found {len(symbols)} symbols for processing")
-
-                if not symbols:
-                    print("No symbols found for processing")
-                    return
-
-                total_records = 0
-                success_count = 0
-                fail_count = 0
-                actual_api_calls = 0
-
-                for i, symbol in enumerate(symbols):
-                    symbol_id, ipo_date, status, delisting_date = symbol_mapping[symbol]
-                    symbol_records = []
-
-                    print(f"\n--- Processing symbol {symbol} (ID: {symbol_id}) [{i+1}/{len(symbols)}] ---")
-
-                    # Get quarters for this symbol
-                    symbol_quarters = self.get_quarters_for_symbol(ipo_date, delisting_date)
-                    
-                    # Get existing quarters to avoid duplicates
-                    existing_quarters = self.get_existing_quarters_for_symbol(db, symbol_id)
-                    
-                    # Filter out already processed quarters
-                    missing_quarters = [q for q in symbol_quarters if q not in existing_quarters]
-                    
-                    if not missing_quarters:
-                        print(f"  All quarters already processed for {symbol}, skipping...")
-                        continue
-                    
-                    print(f"  Processing {len(missing_quarters)} missing quarters (out of {len(symbol_quarters)} total)")
-                    if existing_quarters:
-                        print(f"  Skipping {len(existing_quarters)} existing quarters")
-
-                    consecutive_no_data = 0
-
-                    # Process only missing quarters for this symbol
-                    for quarter in missing_quarters:
-                        actual_api_calls += 1
-
-                        try:
-                            data, status_code = self.extract_single_earnings_call_transcript(symbol, quarter)
-
-                            records = self.transform_earnings_call_transcript_data(
-                                symbol, symbol_id, quarter, data, status_code
-                            )
-
-                            if records:
-                                symbol_records.extend(records)
-                                if status_code == 'pass':
-                                    print(f"✓ Processed {symbol} {quarter} (ID: {symbol_id}) - {len(records)} records [API: {actual_api_calls}/{total_api_calls}]")
-                                elif status_code == 'no_data':
-                                    print(f"○ Processed {symbol} {quarter} (ID: {symbol_id}) - No data available [API: {actual_api_calls}/{total_api_calls}]")
-                                else:
-                                    print(f"! Processed {symbol} {quarter} (ID: {symbol_id}) - {status_code} [API: {actual_api_calls}/{total_api_calls}]")
-                            else:
-                                print(f"✗ Processed {symbol} {quarter} (ID: {symbol_id}) - Transform failed [API: {actual_api_calls}/{total_api_calls}]")
-
-                            # Track consecutive missing quarters
-                            if status_code == 'no_data':
-                                consecutive_no_data += 1
-                            else:
-                                consecutive_no_data = 0
-
-                            # Early stopping optimization
-                            if consecutive_no_data >= 4:
-                                print(f"  Reached 4 consecutive missing quarters for {symbol}, stopping early")
-                                break
-
-                        except Exception as e:
-                            print(f"✗ Error processing {symbol} {quarter} (ID: {symbol_id}): {e} [API: {actual_api_calls}/{total_api_calls}]")
-                            continue
-
-                        # Rate limiting between requests
-                        if actual_api_calls < total_api_calls:
-                            time.sleep(self.rate_limit_delay)
-
-                    # Load all records for this symbol at once
-                    if symbol_records:
-                        self.load_earnings_call_transcript_data_with_db(db, symbol_records)
-                        total_records += len(symbol_records)
-                        success_count += 1
-                        print(f"✓ Completed symbol {symbol} - {len(symbol_records)} total records")
-                    else:
-                        if missing_quarters:  # Only count as fail if there were quarters to process
-                            fail_count += 1
-                            print(f"✗ Completed symbol {symbol} - 0 total records")
-
-                # Get remaining symbols count for summary
-                remaining_count = self.get_remaining_symbols_count_with_db(db, exchange_filter)
-
-            # Print summary
-            print("\n" + "="*60)
-            print("Earnings Call Transcripts ETL Summary:")
-            print(f"  Mode: {mode_desc}")
-            print(f"  Exchange: {exchange_filter or 'All exchanges'}")
-            print(f"  Total symbols processed: {len(symbols)}")
-            print(f"  Successful symbols: {success_count}")
-            print(f"  Failed symbols: {fail_count}")
-            print(f"  Remaining symbols: {remaining_count}")
-            print(f"  Estimated API calls: {total_api_calls}")
-            print(f"  Actual API calls made: {actual_api_calls}")
-            print(f"  API call efficiency: {(actual_api_calls/total_api_calls*100):.1f}%" if total_api_calls > 0 else "N/A")
-            print(f"  Total records loaded: {total_records:,}")
-            print(f"  Average records per symbol: {total_records/success_count if success_count > 0 else 0:.1f}")
-            print("="*60)
-
-            print("Earnings Call Transcripts ETL process completed successfully!")
-
-        except Exception as e:
-            print(f"Earnings Call Transcripts ETL process failed: {e}")
-            raise
-
-    def display_dry_run_results(self, total_api_calls, symbol_breakdown, exchange_filter, limit):
-        """Display dry-run results showing estimated API calls."""
-        mode_desc = "REPLACE (re-process all)" if self.mode == "replace" else "UPDATE (process missing only)"
-        retry_desc = "INCLUDE failed" if self.retry_failed else "EXCLUDE failed"
-        
-        print("\n" + "="*70)
-        print("🧮 DRY RUN RESULTS - API CALL ESTIMATION")
-        print("="*70)
-        print(f"Mode: {mode_desc}")
-        print(f"Failed symbol handling: {retry_desc}")
-        print(f"Exchange filter: {exchange_filter or 'All exchanges'}")
-        print(f"Symbol limit: {limit or 'No limit'}")
-        print(f"📊 Total estimated API calls: {total_api_calls:,}")
-        
-        if total_api_calls > 0:
-            # Calculate time estimates
-            estimated_time_minutes = (total_api_calls * self.rate_limit_delay) / 60
-            estimated_time_hours = estimated_time_minutes / 60
-            
-            print(f"⏱️  Estimated time at {self.rate_limit_delay}s per call:")
-            print(f"   - {estimated_time_minutes:.1f} minutes")
-            print(f"   - {estimated_time_hours:.1f} hours")
-            
-            # Cost estimates (if applicable)
-            if total_api_calls > 500:  # Free tier limit
-                premium_calls = total_api_calls - 500
-                print(f"💰 API usage:")
-                print(f"   - Free tier: 500 calls")
-                print(f"   - Premium calls needed: {premium_calls:,}")
-        
-        print(f"\n📋 Symbol breakdown (showing symbols needing processing):")
-        
-        symbols_needing_processing = {k: v for k, v in symbol_breakdown.items() if v['missing_quarters'] > 0}
-        
-        if not symbols_needing_processing:
-            if self.retry_failed:
-                print("   ✅ No symbols need processing - all data is current (including previously failed)!")
-            else:
-                print("   ✅ No symbols need processing - all data is current!")
-                print("   💡 Use --retry-failed to include previously failed symbols")
-        else:
-            # Show top 10 symbols with most missing quarters
-            sorted_symbols = sorted(symbols_needing_processing.items(), 
-                                   key=lambda x: x[1]['missing_quarters'], reverse=True)
-            
-            print(f"   Showing top {min(10, len(sorted_symbols))} symbols with most missing quarters:")
-            print(f"   {'Symbol':<8} {'Missing':<8} {'Existing':<9} {'Total':<7} {'Sample Quarters'}")
-            print(f"   {'-'*8} {'-'*8} {'-'*9} {'-'*7} {'-'*20}")
-            
-            for symbol, info in sorted_symbols[:10]:
-                quarters_sample = ', '.join(map(str, info['quarters_list']))
-                print(f"   {symbol:<8} {info['missing_quarters']:<8} {info['existing_quarters']:<9} {info['total_quarters']:<7} {quarters_sample}")
-            
-            if len(sorted_symbols) > 10:
-                print(f"   ... and {len(sorted_symbols) - 10} more symbols")
-        
-        print("="*70)
-        print("💡 To proceed with actual extraction, run without --dry-run flag")
-        print("="*70)
-
-    def create_earnings_call_transcripts_table(self, db):
-        """Create the earnings_call_transcripts table if it doesn't exist."""
-        create_table_sql = """
-            CREATE SCHEMA IF NOT EXISTS extracted;
-            
-            CREATE TABLE IF NOT EXISTS extracted.earnings_call_transcripts (
-                transcript_id       SERIAL PRIMARY KEY,
-                symbol_id           INTEGER NOT NULL,
-                symbol              VARCHAR(20) NOT NULL,
-                quarter             VARCHAR(10) NOT NULL,
-                speaker             VARCHAR(255) NOT NULL,
-                title               VARCHAR(255),
-                content             TEXT NOT NULL,
-                content_hash        VARCHAR(32) NOT NULL,
-                sentiment           DECIMAL(5,3),
-                api_response_status VARCHAR(20) DEFAULT 'pass',
-                created_at          TIMESTAMP DEFAULT NOW(),
-                updated_at          TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE,
-                UNIQUE(symbol_id, quarter, speaker, content_hash)
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol_id ON extracted.earnings_call_transcripts(symbol_id);
-            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_symbol ON extracted.earnings_call_transcripts(symbol);
-            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_quarter ON extracted.earnings_call_transcripts(quarter);
-            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON extracted.earnings_call_transcripts(speaker);
-            CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON extracted.earnings_call_transcripts(sentiment);
+        # Use the basic query since watermark manager might need adjustment for schema
+        query = """
+            SELECT ls.symbol_id, ls.symbol, 
+                   ew.last_fiscal_date, ew.last_successful_run, ew.consecutive_failures
+            FROM extracted.listing_status ls
+            LEFT JOIN source.extraction_watermarks ew ON ew.symbol_id = ls.symbol_id 
+                                                       AND ew.table_name = %s
+            WHERE ls.asset_type = 'Stock'
+              AND LOWER(ls.status) = 'active'
+              AND ls.symbol NOT LIKE '%%WS%%'   -- Exclude warrants
+              AND ls.symbol NOT LIKE '%%R'     -- Exclude rights  
+              AND ls.symbol NOT LIKE '%%R%%'   -- Exclude rights variants
+              AND ls.symbol NOT LIKE '%%P%%'   -- Exclude preferred shares
+              AND ls.symbol NOT LIKE '%%U'      -- Exclude units (SPACs)
+              AND ls.symbol NOT LIKE '%%U'     -- Exclude unit variants
+              AND (
+                  ew.last_successful_run IS NULL  -- Never processed
+                  OR ew.last_successful_run < NOW() - INTERVAL '1 hour' * %s  -- Stale
+              )
+              AND COALESCE(ew.consecutive_failures, 0) < %s  -- Not permanently failed
         """
         
-        db.execute_query(create_table_sql)
-        print("Created extracted.earnings_call_transcripts table with indexes")
-
-    def get_remaining_symbols_count_with_db(self, db, exchange_filter=None):
-        """Get count of remaining unprocessed symbols using provided database connection."""
-        if self.mode == "replace":
-            # In replace mode, count all symbols (since we re-process everything)
-            base_query = """
-                SELECT COUNT(DISTINCT symbol_id)
-                FROM extracted.listing_status 
-                WHERE asset_type = 'Stock'
-            """
-        else:
-            # In update mode, count only symbols with no data
-            base_query = """
-                SELECT COUNT(DISTINCT ls.symbol_id)
-                FROM extracted.listing_status ls 
-                LEFT JOIN extracted.earnings_call_transcripts ect ON ls.symbol_id = ect.symbol_id 
-                WHERE ls.asset_type = 'Stock' AND ect.symbol_id IS NULL
-            """
+        params = [TABLE_NAME, staleness_hours, max_failures]
         
-        params = []
-
         if exchange_filter:
             if isinstance(exchange_filter, list):
                 placeholders = ','.join(['%s' for _ in exchange_filter])
-                base_query += f" AND ls.exchange IN ({placeholders})" if "ls.exchange" in base_query else f" AND exchange IN ({placeholders})"
+                query += f" AND ls.exchange IN ({placeholders})"
                 params.extend(exchange_filter)
             else:
-                base_query += f" AND ls.exchange = %s" if "ls.exchange" in base_query else f" AND exchange = %s"
+                query += " AND ls.exchange = %s"
                 params.append(exchange_filter)
-
-        return db.fetch_query(base_query, params)[0][0]
-
-    def get_quarters_for_symbol(self, ipo_date, delisting_date=None):
-        """Generate quarters for a symbol in reverse chronological order.
-
-        Starts from the most recent quarter (or delisting quarter if provided)
-        and moves backwards to either the IPO quarter or 2010Q1, whichever is later.
+        
+        query += """
+            ORDER BY 
+                CASE WHEN ew.last_successful_run IS NULL THEN 0 ELSE 1 END,
+                COALESCE(ew.last_successful_run, '1900-01-01'::timestamp) ASC,
+                LENGTH(ls.symbol) ASC,
+                ls.symbol ASC
         """
-
+        
+        if limit:
+            query += " LIMIT %s"
+            params.append(limit)
+        
+        results = self.db.fetch_query(query, params)
+        
+        return [
+            {
+                'symbol_id': row[0],
+                'symbol': row[1],
+                'last_fiscal_date': row[2],
+                'last_successful_run': row[3],
+                'consecutive_failures': row[4] or 0
+            }
+            for row in results
+        ]
+    
+    def extract_api_data(self, symbol: str, quarter: str) -> tuple[Optional[Dict], str]:
+        """
+        Extract earnings call transcript data from Alpha Vantage API.
+        
+        Args:
+            symbol: Stock symbol
+            quarter: Quarter in format YYYYQM (e.g., 2024Q1)
+            
+        Returns:
+            Tuple of (api_data, status) where status is 'success', 'no_data', or 'error'
+        """
+        print(f"  Fetching {symbol} {quarter} from API...")
+        
+        url = f'{self.base_url}?function={STOCK_API_FUNCTION}&symbol={symbol}&quarter={quarter}&apikey={self.api_key}'
+        
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            # Check for API errors
+            if 'Error Message' in data:
+                print(f"    API Error: {data['Error Message']}")
+                return None, 'error'
+            
+            if 'Note' in data:
+                print(f"    API Note: {data['Note']}")
+                return None, 'error'
+            
+            # Check if we have transcript data
+            if 'transcript' not in data or not data['transcript']:
+                print(f"    No transcript data available")
+                return None, 'no_data'
+            
+            print(f"    ✓ Retrieved {len(data['transcript'])} transcript entries")
+            return data, 'success'
+            
+        except requests.exceptions.RequestException as e:
+            print(f"    ✗ Request failed: {e}")
+            return None, 'error'
+        except json.JSONDecodeError as e:
+            print(f"    ✗ JSON decode failed: {e}")
+            return None, 'error'
+        except Exception as e:
+            print(f"    ✗ Unexpected error: {e}")
+            return None, 'error'
+    
+    def get_quarters_for_symbol(self, symbol_data: Dict[str, Any]) -> List[str]:
+        """
+        Get quarters to process for a symbol based on IPO date and current date.
+        
+        Args:
+            symbol_data: Symbol information including IPO date
+            
+        Returns:
+            List of quarters to process in reverse chronological order
+        """
+        symbol_id = symbol_data['symbol_id']
+        
+        # Get IPO date from extracted.listing_status
+        query = """
+            SELECT ipo_date, delisting_date 
+            FROM extracted.listing_status 
+            WHERE symbol_id = %s
+        """
+        result = self.db.fetch_query(query, (symbol_id,))
+        
+        if not result:
+            # Fallback to all quarters
+            return self.quarters
+        
+        ipo_date, delisting_date = result[0]
+        
+        if not ipo_date:
+            # No IPO date info, process all quarters
+            return self.quarters
+        
+        # Parse dates
         def parse_date(d):
             if not d:
                 return None
@@ -816,18 +340,18 @@ class EarningsCallTranscriptsExtractor:
             if isinstance(d, datetime):
                 return d.date()
             return d
-
+        
         def to_year_quarter(dt: date):
             return dt.year, (dt.month - 1) // 3 + 1
-
+        
         ipo_dt = parse_date(ipo_date)
         delist_dt = parse_date(delisting_date)
         start_dt = delist_dt or datetime.now().date()
         earliest_dt = max(date(2010, 1, 1), ipo_dt) if ipo_dt else date(2010, 1, 1)
-
+        
         start_year, start_quarter = to_year_quarter(start_dt)
         end_year, end_quarter = to_year_quarter(earliest_dt)
-
+        
         quarters = []
         year, quarter = start_year, start_quarter
         while year > end_year or (year == end_year and quarter >= end_quarter):
@@ -836,50 +360,464 @@ class EarningsCallTranscriptsExtractor:
             if quarter == 0:
                 quarter = 4
                 year -= 1
-
-        if quarters:
-            print(
-                f"  Generated {len(quarters)} quarters: {quarters[0]} to {quarters[-1]}"
-            )
+        
         return quarters
+    
+    def get_existing_quarters(self, symbol_id: int) -> set:
+        """
+        Get quarters that already have data for a symbol.
+        
+        Args:
+            symbol_id: Symbol ID
+            
+        Returns:
+            Set of quarters already processed
+        """
+        query = """
+            SELECT DISTINCT quarter 
+            FROM source.earnings_call_transcripts 
+            WHERE symbol_id = %s
+        """
+        
+        result = self.db.fetch_query(query, (symbol_id,))
+        return set(row[0] for row in result) if result else set()
+    
+    def transform_transcript_data(self, symbol_data: Dict[str, Any], quarter: str, 
+                                api_data: Optional[Dict], status: str) -> List[Dict[str, Any]]:
+        """
+        Transform API response data into database records.
+        
+        Args:
+            symbol_data: Symbol information
+            quarter: Quarter being processed
+            api_data: Raw API response data
+            status: Processing status ('success', 'no_data', 'error')
+            
+        Returns:
+            List of transformed records
+        """
+        symbol_id = symbol_data['symbol_id']
+        symbol = symbol_data['symbol']
+        current_timestamp = datetime.now()
+        
+        # Handle non-success cases
+        if status == 'no_data':
+            content = 'No transcript data available'
+            return [{
+                'symbol_id': symbol_id,
+                'symbol': symbol,
+                'quarter': quarter,
+                'speaker': 'NO_DATA',
+                'title': None,
+                'content': content,
+                'content_hash': ContentHasher.calculate_business_content_hash({
+                    'symbol_id': symbol_id,
+                    'quarter': quarter, 
+                    'speaker': 'NO_DATA',
+                    'content': content
+                }),
+                'sentiment': None,
+                'api_response_status': 'no_data',
+                'source_run_id': self.run_id,
+                'fetched_at': current_timestamp,
+                'created_at': current_timestamp,
+                'updated_at': current_timestamp
+            }]
+        
+        if status == 'error' or not api_data:
+            content = 'API Error'
+            return [{
+                'symbol_id': symbol_id,
+                'symbol': symbol,
+                'quarter': quarter,
+                'speaker': 'ERROR',
+                'title': None,
+                'content': content,
+                'content_hash': ContentHasher.calculate_business_content_hash({
+                    'symbol_id': symbol_id,
+                    'quarter': quarter,
+                    'speaker': 'ERROR',
+                    'content': content
+                }),
+                'sentiment': None,
+                'api_response_status': 'error',
+                'source_run_id': self.run_id,
+                'fetched_at': current_timestamp,
+                'created_at': current_timestamp,
+                'updated_at': current_timestamp
+            }]
+        
+        # Transform successful transcript data
+        records = []
+        
+        try:
+            for transcript_entry in api_data['transcript']:
+                # Helper function to convert sentiment values
+                def convert_sentiment(value):
+                    if value is None or value == '' or value == 'None':
+                        return None
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return None
+                
+                speaker = transcript_entry.get('speaker', 'Unknown')
+                title = transcript_entry.get('title')
+                content = transcript_entry.get('content', '')
+                sentiment = convert_sentiment(transcript_entry.get('sentiment'))
+                
+                # Calculate business content hash
+                business_data = {
+                    'symbol_id': symbol_id,
+                    'quarter': quarter,
+                    'speaker': speaker,
+                    'title': title,
+                    'content': content,
+                    'sentiment': sentiment
+                }
+                content_hash = ContentHasher.calculate_business_content_hash(business_data)
+                
+                record = {
+                    'symbol_id': symbol_id,
+                    'symbol': symbol,
+                    'quarter': quarter,
+                    'speaker': speaker,
+                    'title': title,
+                    'content': content,
+                    'content_hash': content_hash,
+                    'sentiment': sentiment,
+                    'api_response_status': 'pass',
+                    'source_run_id': self.run_id,
+                    'fetched_at': current_timestamp,
+                    'created_at': current_timestamp,
+                    'updated_at': current_timestamp
+                }
+                
+                records.append(record)
+            
+            print(f"    ✓ Transformed {len(records)} transcript records")
+            return records
+            
+        except Exception as e:
+            print(f"    ✗ Transform error: {e}")
+            # Return error record on transform failure
+            content = f'Transform Error: {str(e)}'
+            return [{
+                'symbol_id': symbol_id,
+                'symbol': symbol,
+                'quarter': quarter,
+                'speaker': 'TRANSFORM_ERROR',
+                'title': None,
+                'content': content,
+                'content_hash': ContentHasher.calculate_business_content_hash({
+                    'symbol_id': symbol_id,
+                    'quarter': quarter,
+                    'speaker': 'TRANSFORM_ERROR',
+                    'content': content
+                }),
+                'sentiment': None,
+                'api_response_status': 'error',
+                'source_run_id': self.run_id,
+                'fetched_at': current_timestamp,
+                'created_at': current_timestamp,
+                'updated_at': current_timestamp
+            }]
+    
+    def load_records(self, records: List[Dict[str, Any]]) -> int:
+        """
+        Load transformed records into the database.
+        
+        Args:
+            records: List of transformed records
+            
+        Returns:
+            Number of records loaded
+        """
+        if not records:
+            return 0
+        
+        # Prepare insert query with conflict handling
+        columns = list(records[0].keys())
+        placeholders = ', '.join(['%s' for _ in columns])
+        
+        insert_query = f"""
+            INSERT INTO source.earnings_call_transcripts ({', '.join(columns)}) 
+            VALUES ({placeholders})
+            ON CONFLICT (symbol_id, quarter, speaker, content_hash) 
+            DO UPDATE SET
+                title = EXCLUDED.title,
+                content = EXCLUDED.content,
+                sentiment = EXCLUDED.sentiment,
+                api_response_status = EXCLUDED.api_response_status,
+                source_run_id = EXCLUDED.source_run_id,
+                fetched_at = EXCLUDED.fetched_at,
+                updated_at = EXCLUDED.updated_at
+        """
+        
+        # Convert records to tuples
+        record_tuples = [tuple(record[col] for col in columns) for record in records]
+        
+        # Execute bulk insert
+        rows_affected = self.db.execute_many(insert_query, record_tuples)
+        print(f"    ✓ Loaded {rows_affected} records to database")
+        return rows_affected
+    
+    def process_symbol(self, symbol_data: Dict[str, Any], 
+                      force_refresh: bool = False) -> Dict[str, Any]:
+        """
+        Process earnings call transcripts for a single symbol.
+        
+        Args:
+            symbol_data: Symbol information
+            force_refresh: Force processing even if recently processed
+            
+        Returns:
+            Processing statistics
+        """
+        symbol_id = symbol_data['symbol_id']
+        symbol = symbol_data['symbol']
+        
+        print(f"Processing {symbol} (ID: {symbol_id})")
+        
+        # Check if processing is needed
+        if not force_refresh:
+            if not self.watermark_manager.needs_processing(TABLE_NAME, symbol_id):
+                print(f"  ↷ Skipping {symbol} - recently processed")
+                return {
+                    'symbol': symbol,
+                    'symbol_id': symbol_id,
+                    'status': 'skipped',
+                    'api_calls': 0,
+                    'records_loaded': 0,
+                    'quarters_processed': 0
+                }
+        
+        # Get quarters to process
+        available_quarters = self.get_quarters_for_symbol(symbol_data)
+        existing_quarters = self.get_existing_quarters(symbol_id)
+        missing_quarters = [q for q in available_quarters if q not in existing_quarters]
+        
+        if not missing_quarters:
+            print(f"  ✓ {symbol} already has data for all quarters")
+            self.watermark_manager.update_watermark(TABLE_NAME, symbol_id, success=True)
+            return {
+                'symbol': symbol,
+                'symbol_id': symbol_id,
+                'status': 'complete',
+                'api_calls': 0,
+                'records_loaded': 0,
+                'quarters_processed': 0
+            }
+        
+        print(f"  Processing {len(missing_quarters)} missing quarters (out of {len(available_quarters)} total)")
+        
+        total_records = 0
+        api_calls = 0
+        quarters_processed = 0
+        consecutive_no_data = 0
+        has_success = False
+        
+        # Process missing quarters
+        for quarter in missing_quarters:
+            api_calls += 1
+            quarters_processed += 1
+            
+            # Extract data from API
+            api_data, status = self.extract_api_data(symbol, quarter)
+            
+            # Transform data
+            records = self.transform_transcript_data(symbol_data, quarter, api_data, status)
+            
+            # Load records
+            if records:
+                loaded_count = self.load_records(records)
+                total_records += loaded_count
+                
+                if status == 'success':
+                    has_success = True
+                    consecutive_no_data = 0
+                elif status == 'no_data':
+                    consecutive_no_data += 1
+                else:
+                    consecutive_no_data = 0
+            
+            # Early stopping for consecutive no_data
+            if consecutive_no_data >= 4:
+                print(f"  ↷ Stopping early after 4 consecutive no_data quarters")
+                break
+            
+            # Rate limiting
+            time.sleep(API_DELAY_SECONDS)
+        
+        # Update watermark
+        self.watermark_manager.update_watermark(TABLE_NAME, symbol_id, success=has_success)
+        
+        result_status = 'success' if has_success else 'no_data_or_error'
+        print(f"  ✓ Completed {symbol}: {quarters_processed} quarters, {api_calls} API calls, {total_records} records")
+        
+        return {
+            'symbol': symbol,
+            'symbol_id': symbol_id,
+            'status': result_status,
+            'api_calls': api_calls,
+            'records_loaded': total_records,
+            'quarters_processed': quarters_processed
+        }
+    
+    def run_extraction(self, 
+                      limit: Optional[int] = None,
+                      exchange_filter: Optional[List[str]] = None,
+                      staleness_hours: int = 24,
+                      max_failures: int = 3,
+                      force_refresh: bool = False,
+                      dry_run: bool = False) -> Dict[str, Any]:
+        """
+        Run the earnings call transcripts extraction process.
+        
+        Args:
+            limit: Maximum number of symbols to process
+            exchange_filter: Filter by exchanges (e.g., ['NASDAQ', 'NYSE'])
+            staleness_hours: Hours before data is considered stale
+            max_failures: Maximum consecutive failures before giving up
+            force_refresh: Force processing even if recently processed
+            dry_run: Only show what would be processed
+            
+        Returns:
+            Extraction statistics
+        """
+        print(f"🚀 Starting Earnings Call Transcripts Extraction")
+        print(f"   Run ID: {self.run_id}")
+        print(f"   Exchange filter: {exchange_filter or 'All'}")
+        print(f"   Limit: {limit or 'No limit'}")
+        print(f"   Staleness threshold: {staleness_hours} hours")
+        print(f"   Max failures: {max_failures}")
+        print(f"   Force refresh: {force_refresh}")
+        print(f"   Dry run: {dry_run}")
+        
+        # Get symbols needing processing
+        symbols_to_process = self.get_symbols_needing_processing(
+            staleness_hours=staleness_hours,
+            max_failures=max_failures,
+            limit=limit,
+            exchange_filter=exchange_filter
+        )
+        
+        print(f"\nFound {len(symbols_to_process)} symbols needing processing")
+        
+        if dry_run:
+            print("\n🧮 DRY RUN - Would process:")
+            for i, symbol_data in enumerate(symbols_to_process[:10]):  # Show first 10
+                quarters = self.get_quarters_for_symbol(symbol_data)
+                existing = self.get_existing_quarters(symbol_data['symbol_id'])
+                missing = len([q for q in quarters if q not in existing])
+                print(f"  {i+1:3d}. {symbol_data['symbol']:<8} - {missing:3d} missing quarters")
+            
+            if len(symbols_to_process) > 10:
+                print(f"  ... and {len(symbols_to_process) - 10} more symbols")
+            
+            # Estimate API calls
+            total_api_calls = 0
+            for symbol_data in symbols_to_process:
+                quarters = self.get_quarters_for_symbol(symbol_data)
+                existing = self.get_existing_quarters(symbol_data['symbol_id'])
+                missing = len([q for q in quarters if q not in existing])
+                total_api_calls += min(missing, 20)  # Estimate with early stopping
+            
+            estimated_time = (total_api_calls * API_DELAY_SECONDS) / 60
+            print(f"\n📊 Estimated API calls: {total_api_calls:,}")
+            print(f"⏱️  Estimated time: {estimated_time:.1f} minutes")
+            
+            return {
+                'dry_run': True,
+                'symbols_found': len(symbols_to_process),
+                'estimated_api_calls': total_api_calls,
+                'estimated_time_minutes': estimated_time
+            }
+        
+        if not symbols_to_process:
+            print("✓ No symbols need processing")
+            return {
+                'symbols_processed': 0,
+                'total_api_calls': 0,
+                'total_records_loaded': 0,
+                'total_quarters_processed': 0,
+                'successful_symbols': 0,
+                'failed_symbols': 0
+            }
+        
+        # Process symbols
+        stats = {
+            'symbols_processed': 0,
+            'total_api_calls': 0,
+            'total_records_loaded': 0,
+            'total_quarters_processed': 0,
+            'successful_symbols': 0,
+            'failed_symbols': 0
+        }
+        
+        for i, symbol_data in enumerate(symbols_to_process):
+            print(f"\n--- [{i+1}/{len(symbols_to_process)}] ---")
+            
+            try:
+                result = self.process_symbol(symbol_data, force_refresh=force_refresh)
+                
+                stats['symbols_processed'] += 1
+                stats['total_api_calls'] += result['api_calls']
+                stats['total_records_loaded'] += result['records_loaded']
+                stats['total_quarters_processed'] += result['quarters_processed']
+                
+                if result['status'] in ['success', 'complete']:
+                    stats['successful_symbols'] += 1
+                else:
+                    stats['failed_symbols'] += 1
+                    
+            except Exception as e:
+                print(f"  ✗ Error processing {symbol_data['symbol']}: {e}")
+                stats['symbols_processed'] += 1
+                stats['failed_symbols'] += 1
+                
+                # Update watermark to track failure
+                self.watermark_manager.update_watermark(
+                    TABLE_NAME, symbol_data['symbol_id'], success=False
+                )
+        
+        # Print summary
+        print(f"\n{'='*60}")
+        print(f"🎯 Earnings Call Transcripts Extraction Complete")
+        print(f"   Symbols processed: {stats['symbols_processed']}")
+        print(f"   Successful: {stats['successful_symbols']}")
+        print(f"   Failed: {stats['failed_symbols']}")
+        print(f"   Total API calls: {stats['total_api_calls']:,}")
+        print(f"   Total records loaded: {stats['total_records_loaded']:,}")
+        print(f"   Total quarters processed: {stats['total_quarters_processed']:,}")
+        print(f"   Average records per symbol: {stats['total_records_loaded']/max(stats['successful_symbols'], 1):.1f}")
+        print(f"{'='*60}")
+        
+        return stats
+
 
 def main():
     """Main function to run the earnings call transcripts extraction with CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Extract earnings call transcripts data from Alpha Vantage API",
+        description="Modern earnings call transcripts extractor with watermarks",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Incremental update (default) - process only missing quarters
+  # Process symbols needing updates
   python extract_earnings_call_transcripts.py
   
   # Process specific exchange with limit
-  python extract_earnings_call_transcripts.py --exchange NASDAQ --limit 100
+  python extract_earnings_call_transcripts.py --exchange NASDAQ --limit 50
   
-  # Dry run to estimate API calls
-  python extract_earnings_call_transcripts.py --dry-run --exchange NYSE --limit 50
+  # Dry run to see what would be processed
+  python extract_earnings_call_transcripts.py --dry-run --limit 100
   
-  # Full replacement mode (re-process all symbols)
-  python extract_earnings_call_transcripts.py --mode replace --limit 10
+  # Force refresh all symbols (ignore watermarks)
+  python extract_earnings_call_transcripts.py --force-refresh --limit 10
   
-  # Include previously failed symbols for retry
-  python extract_earnings_call_transcripts.py --retry-failed --limit 20
-  
-  # Dry run with failed symbols included
-  python extract_earnings_call_transcripts.py --dry-run --retry-failed --exchange NASDAQ
+  # Process with custom staleness threshold
+  python extract_earnings_call_transcripts.py --staleness-hours 48 --limit 20
         """
-    )
-    
-    parser.add_argument(
-        "--mode",
-        choices=["update", "replace"],
-        default="update",
-        help="Operation mode: 'update' for incremental (default), 'replace' for full re-processing"
-    )
-    
-    parser.add_argument(
-        "--exchange",
-        help="Filter by exchange (e.g., NASDAQ, NYSE, AMEX)"
     )
     
     parser.add_argument(
@@ -889,37 +827,154 @@ Examples:
     )
     
     parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Calculate and display API call estimates without making actual calls"
+        "--exchange",
+        action="append",
+        help="Filter by exchange (can be used multiple times)"
     )
     
     parser.add_argument(
-        "--retry-failed",
+        "--staleness-hours",
+        type=int,
+        default=24,
+        help="Hours before data is considered stale (default: 24)"
+    )
+    
+    parser.add_argument(
+        "--max-failures",
+        type=int,
+        default=3,
+        help="Maximum consecutive failures before giving up (default: 3)"
+    )
+    
+    parser.add_argument(
+        "--force-refresh",
         action="store_true",
-        help="Include previously failed symbols in processing (default: exclude failed symbols)"
+        help="Force processing even if recently processed"
+    )
+    
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be processed without making API calls"
     )
     
     args = parser.parse_args()
     
-    print(f"🚀 Starting Earnings Call Transcripts Extractor")
-    print(f"   Mode: {args.mode.upper()}")
-    print(f"   Exchange: {args.exchange or 'All'}")
-    print(f"   Limit: {args.limit or 'No limit'}")
-    print(f"   Dry run: {'Yes' if args.dry_run else 'No'}")
-    print(f"   Retry failed: {'Yes' if args.retry_failed else 'No'}")
-    
     try:
-        extractor = EarningsCallTranscriptsExtractor(mode=args.mode, retry_failed=args.retry_failed)
-        extractor.run_etl_incremental(
-            exchange_filter=args.exchange,
-            limit=args.limit,
-            dry_run=args.dry_run
-        )
+        # Initialize database manager and extractor
+        db_manager = PostgresDatabaseManager()
+        
+        with db_manager as db:
+            extractor = EarningsCallTranscriptsExtractor(db)
+            
+            # Run extraction
+            results = extractor.run_extraction(
+                limit=args.limit,
+                exchange_filter=args.exchange,
+                staleness_hours=args.staleness_hours,
+                max_failures=args.max_failures,
+                force_refresh=args.force_refresh,
+                dry_run=args.dry_run
+            )
+            
+            if not args.dry_run:
+                print(f"\n✅ Extraction completed successfully!")
+            
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"\n❌ Extraction failed: {e}")
         sys.exit(1)
 
 
 if __name__ == "__main__":
     main()
+
+# -----------------------------------------------------------------------------
+# RUN INSTRUCTIONS - Earnings Call Transcripts Extractor
+# -----------------------------------------------------------------------------
+#
+# This is a modern, production-ready extractor for earnings call transcripts 
+# that uses incremental ETL with watermarks, content hashing, and the source schema.
+#
+# PREREQUISITES:
+# 1. PostgreSQL database with extracted.listing_status table populated
+# 2. ALPHAVANTAGE_API_KEY set in .env file
+# 3. Python virtual environment activated: .\.venv\Scripts\Activate.ps1
+#
+# BASIC USAGE:
+#
+# 1. DRY RUN (recommended first step):
+#    Shows what would be processed without making API calls
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --dry-run --limit 10
+#
+# 2. INCREMENTAL EXTRACTION (default mode):
+#    Processes only symbols that need updates based on watermarks
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --limit 50
+#
+# 3. EXCHANGE-SPECIFIC PROCESSING:
+#    Process only symbols from specific exchanges
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --exchange NASDAQ --limit 25
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --exchange NYSE --exchange AMEX --limit 40
+#
+# 4. FORCE REFRESH:
+#    Ignore watermarks and process symbols even if recently updated
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --force-refresh --limit 10
+#
+# 5. CUSTOM STALENESS THRESHOLD:
+#    Change how long before data is considered stale (default: 24 hours)
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --staleness-hours 48 --limit 20
+#
+# 6. PRODUCTION RUN:
+#    Large batch processing for production updates
+#    & .\.venv\Scripts\python.exe data_pipeline\extract\extract_earnings_call_transcripts.py --limit 500
+#
+# ADVANCED OPTIONS:
+#
+# --dry-run              : Show what would be processed (no API calls)
+# --limit N              : Maximum number of symbols to process
+# --exchange EXCHANGE    : Filter by exchange (NASDAQ, NYSE, AMEX, etc.)
+# --staleness-hours N    : Hours before data considered stale (default: 24)
+# --max-failures N       : Max consecutive failures before giving up (default: 3)
+# --force-refresh        : Ignore watermarks, process even recently updated symbols
+#
+# MONITORING & DEBUGGING:
+#
+# 1. CHECK WATERMARK STATUS:
+#    Query: SELECT * FROM source.extraction_watermarks WHERE table_name = 'earnings_call_transcripts' ORDER BY last_successful_run DESC LIMIT 10;
+#
+# 2. CHECK RECENT EXTRACTIONS:
+#    Query: SELECT symbol, quarter, api_response_status, created_at FROM source.earnings_call_transcripts WHERE created_at > NOW() - INTERVAL '1 day' ORDER BY created_at DESC LIMIT 20;
+#
+# 3. COUNT RECORDS BY STATUS:
+#    Query: SELECT api_response_status, COUNT(*) FROM source.earnings_call_transcripts GROUP BY api_response_status;
+#
+# API RATE LIMITING:
+# - Alpha Vantage Premium: 75 requests/minute (0.8 second delay between calls)
+# - Free tier: 500 requests/day, 5 requests/minute
+# - The extractor automatically handles rate limiting
+#
+# DATA VOLUME ESTIMATES:
+# - Each symbol has ~63 quarters (2010Q1 to current)
+# - Each quarter may have 5-20 transcript entries (speakers)
+# - Full extraction of 1000 symbols ≈ 60,000+ API calls
+# - Estimated time: 13+ hours for full 1000 symbol extraction
+#
+# TYPICAL WORKFLOW:
+# 1. Run dry-run with small limit to verify
+# 2. Process in batches of 50-100 symbols
+# 3. Monitor for errors and API limits
+# 4. Use exchange filters to distribute load
+# 5. Schedule regular incremental updates
+#
+# TROUBLESHOOTING:
+# - If stuck on failed symbols, check consecutive_failures in watermarks table
+# - Failed symbols are automatically skipped after max-failures threshold
+# - Use --force-refresh to retry previously failed symbols
+# - Check database constraints if getting unique key violations
+#
+# PERFORMANCE NOTES:
+# - Watermarks prevent re-processing of existing data
+# - Content hashing detects actual data changes vs metadata updates
+# - Early stopping after 4 consecutive no-data quarters per symbol
+# - Batch database inserts for efficiency
+#
+# -----------------------------------------------------------------------------

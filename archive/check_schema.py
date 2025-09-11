@@ -1,36 +1,49 @@
 #!/usr/bin/env python3
-"""
-Check the company_master table schema to understand the data type issue
-"""
 
-import pandas as pd
+import sys
+from pathlib import Path
+
+# Add parent directory to path
+sys.path.append(str(Path(__file__).parent.parent))
+
 from db.postgres_database_manager import PostgresDatabaseManager
 
 def main():
-    db_manager = PostgresDatabaseManager()
+    print("Checking database schema...")
     
+    db_manager = PostgresDatabaseManager()
     with db_manager as db:
-        print("🔍 Checking company_master table schema...")
-        schema_query = """
-        SELECT column_name, data_type, is_nullable, column_default 
-        FROM information_schema.columns 
-        WHERE table_name = 'company_master' AND table_schema = 'transformed' 
-        ORDER BY ordinal_position
+        # Check for listing_status table
+        tables_to_check = [
+            'listing_status',
+            'extracted.listing_status', 
+            'source.extraction_watermarks',
+            'extracted.earnings_call_transcripts',
+            'source.earnings_call_transcripts'
+        ]
+        
+        for table in tables_to_check:
+            exists = db.table_exists(table)
+            print(f"{table}: {'EXISTS' if exists else 'MISSING'}")
+        
+        # Get all tables with relevant names
+        query = """
+            SELECT table_schema, table_name 
+            FROM information_schema.tables 
+            WHERE table_name IN ('listing_status', 'earnings_call_transcripts', 'extraction_watermarks')
+            ORDER BY table_schema, table_name
         """
-        schema_data = db.fetch_query(schema_query)
-        schema_df = pd.DataFrame(schema_data, columns=['column', 'type', 'nullable', 'default'])
+        result = db.fetch_query(query)
+        print(f"\nFound relevant tables: {result}")
         
-        print(f"Company master table has {len(schema_df)} columns:")
-        print(schema_df.to_string())
-        
-        # Check for INTEGER columns that might be causing issues
-        integer_cols = schema_df[schema_df['type'] == 'integer']['column'].tolist()
-        print(f"\n🔍 INTEGER columns: {integer_cols}")
-        
-        # Check if the table has any data
-        count_query = "SELECT COUNT(*) FROM transformed.company_master"
-        count_result = db.fetch_query(count_query)
-        print(f"\n📊 Current row count: {count_result[0][0] if count_result else 0}")
+        # Check specifically for the source schema
+        source_query = """
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'source'
+        """
+        source_result = db.fetch_query(source_query)
+        print(f"\nTables in source schema: {[row[0] for row in source_result]}")
 
 if __name__ == "__main__":
     main()
