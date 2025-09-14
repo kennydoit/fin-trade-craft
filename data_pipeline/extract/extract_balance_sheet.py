@@ -109,6 +109,24 @@ class BalanceSheetExtractor:
                 print(f"✅ Source schema initialized")
             else:
                 print(f"⚠️ Schema file not found: {schema_file}")
+                # Create basic schema if file missing
+                basic_schema = """
+                    CREATE SCHEMA IF NOT EXISTS source;
+                    CREATE TABLE IF NOT EXISTS source.listing_status (
+                        symbol_id BIGINT PRIMARY KEY,
+                        symbol VARCHAR(20) UNIQUE NOT NULL,
+                        name TEXT,
+                        exchange VARCHAR(50),
+                        asset_type VARCHAR(20),
+                        ipo_date DATE,
+                        delisting_date DATE,
+                        status VARCHAR(20),
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    );
+                """
+                db.execute_script(basic_schema)
+                print(f"✅ Basic source schema created")
         except Exception as e:
             print(f"⚠️ Schema initialization error: {e}")
     

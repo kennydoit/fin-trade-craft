@@ -79,7 +79,7 @@ class EarningsCallTranscriptsExtractor:
                 fetched_at          TIMESTAMP DEFAULT NOW(),
                 created_at          TIMESTAMP DEFAULT NOW(),
                 updated_at          TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE,
+                FOREIGN KEY (symbol_id) REFERENCES source.listing_status(symbol_id) ON DELETE CASCADE,
                 UNIQUE(symbol_id, quarter, speaker, content_hash)  -- Use hash instead of full content
             );
 
@@ -128,7 +128,7 @@ class EarningsCallTranscriptsExtractor:
                 consecutive_failures INTEGER DEFAULT 0,
                 created_at          TIMESTAMP DEFAULT NOW(),
                 updated_at          TIMESTAMP DEFAULT NOW(),
-                FOREIGN KEY (symbol_id) REFERENCES extracted.listing_status(symbol_id) ON DELETE CASCADE,
+                FOREIGN KEY (symbol_id) REFERENCES source.listing_status(symbol_id) ON DELETE CASCADE,
                 UNIQUE(table_name, symbol_id)
             );
             
@@ -196,7 +196,7 @@ class EarningsCallTranscriptsExtractor:
         query = """
             SELECT ls.symbol_id, ls.symbol, 
                    ew.last_fiscal_date, ew.last_successful_run, ew.consecutive_failures
-            FROM extracted.listing_status ls
+            FROM source.listing_status ls
             LEFT JOIN source.extraction_watermarks ew ON ew.symbol_id = ls.symbol_id 
                                                        AND ew.table_name = %s
             WHERE ls.asset_type = 'Stock'
@@ -310,10 +310,10 @@ class EarningsCallTranscriptsExtractor:
         """
         symbol_id = symbol_data['symbol_id']
         
-        # Get IPO date from extracted.listing_status
+        # Get IPO date from source.listing_status
         query = """
             SELECT ipo_date, delisting_date 
-            FROM extracted.listing_status 
+            FROM source.listing_status 
             WHERE symbol_id = %s
         """
         result = self.db.fetch_query(query, (symbol_id,))
@@ -896,7 +896,7 @@ if __name__ == "__main__":
 # that uses incremental ETL with watermarks, content hashing, and the source schema.
 #
 # PREREQUISITES:
-# 1. PostgreSQL database with extracted.listing_status table populated
+# 1. PostgreSQL database with source.listing_status table populated
 # 2. ALPHAVANTAGE_API_KEY set in .env file
 # 3. Python virtual environment activated: .\.venv\Scripts\Activate.ps1
 #

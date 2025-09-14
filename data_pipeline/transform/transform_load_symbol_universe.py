@@ -198,73 +198,33 @@ def main(argv: Iterable[str] | None = None) -> None:
         load_symbol_universe(sql_query, universe_name, start_fresh=start_fresh)
 
 
-def test_load_ipo_universe() -> None:
-    """Test function to load the IPO universe CSV file."""
-    csv_path = (
-        Path(__file__).parent.parent
-        / "symbol_universes"
-        / "ipo_before_2020_all_fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income.csv"
-    )
-    universe_name = (
-        "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income"
-    )
-
-    print(f"Loading CSV file: {csv_path}")  # noqa: T201
-    print(f"Universe name: {universe_name}")  # noqa: T201
-
-    try:
-        universe_id = load_symbol_universe(
-            data=csv_path,
-            universe_name=universe_name,
-            start_fresh=False,  # Set to True if you want to recreate the table
-        )
-        print(f"✅ Successfully loaded universe with ID: {universe_id}")  # noqa: T201
-    except Exception as e:
-        print(f"❌ Error loading universe: {e}")  # noqa: T201
-        raise
-
-
-def test_load_ipo_universe_sql() -> None:
-    """Test function to load the IPO universe using a SQL query."""
-    sql_query = """
-    SELECT symbol, exchange, asset_type
-    FROM transformed.company_master
-    WHERE (ipo_date < '2020-01-01')
-      AND status = 'Active'
-      AND asset_type = 'Stock'
-      AND description IS NOT NULL
-      AND industry IS NOT NULL
-      AND sector IS NOT NULL
-      AND (
-            balance_sheet_count > 5
-            OR income_statement_count > 5
-            OR (
-                cash_flow_count > 5
-                AND earnings_call_transcript_count > 5
-            )
-          )
-      AND time_series_daily_adjusted_count > 500
-      AND symbol IN (
-            SELECT DISTINCT symbol
-            FROM extracted.cash_flow
-            WHERE report_type = 'annual'
-              AND fiscal_date_ending >= '2019-01-01'
-              AND fiscal_date_ending < '2020-01-01'
-              AND net_income >= 1000000000
-      );
+def load_universe_from_query(sql_query: str, universe_name: str, start_fresh: bool = False) -> uuid.UUID:
+    """Load a symbol universe using a SQL query.
+    
+    Parameters
+    ----------
+    sql_query:
+        SQL query returning columns symbol, exchange and asset_type
+    universe_name:
+        Name of the universe to apply to all rows
+    start_fresh:
+        When True, drop and recreate table before loading
+        
+    Returns
+    -------
+    uuid.UUID
+        The generated universe_id applied to the loaded rows
     """
-    universe_name = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income"
-
-    print("Loading SQL query universe")  # noqa: T201
-    print(f"Universe name: {universe_name}")  # noqa: T201
-
+    print(f"Loading SQL query universe: {universe_name}")  # noqa: T201
+    
     try:
         universe_id = load_symbol_universe(
             data=sql_query,
             universe_name=universe_name,
-            start_fresh=False,  # Set to True if you want to recreate the table
+            start_fresh=start_fresh,
         )
         print(f"✅ Successfully loaded universe with ID: {universe_id}")  # noqa: T201
+        return universe_id
     except Exception as e:
         print(f"❌ Error loading universe: {e}")  # noqa: T201
         raise
@@ -272,13 +232,51 @@ def test_load_ipo_universe_sql() -> None:
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     # Behavior:
-    #   * If script is invoked with no CLI args -> run the SQL test loader.
+    #   * If script is invoked with no CLI args -> run the SQL-based universe loader.
     #   * If args are provided -> use argparse driven CLI (no test execution).
     # This prevents the argparse error that occurred after successfully running the
     # test function and then calling main() without required flags.
     if len(sys.argv) == 1:
+        # Define SQL query and universe name
+        sql_query = """
+        SELECT symbol, exchange, asset_type
+        FROM transformed.company_master
+        WHERE (ipo_date < '2020-01-01')
+          AND status = 'Active'
+          AND asset_type = 'Stock'
+          AND description IS NOT NULL
+          AND industry IS NOT NULL
+          AND sector IS NOT NULL
+          AND (
+                balance_sheet_count > 5
+                OR income_statement_count > 5
+                OR (
+                    cash_flow_count > 5
+                    AND earnings_call_transcript_count > 5
+                )
+              )
+          AND time_series_daily_adjusted_count > 500
+          AND symbol IN (
+                SELECT DISTINCT symbol
+                FROM extracted.cash_flow
+                WHERE report_type = 'annual'
+                  AND fiscal_date_ending >= '2019-01-01'
+                  AND fiscal_date_ending < '2020-01-01'
+                  AND net_income >= 1000000000
+          );
+        """
+        universe_name = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income"
+        
+        # Single function call with SQL query and universe name as arguments
+        load_universe_from_query(sql_query, universe_name, start_fresh=False)
+        
         # Uncomment to test the CSV-based universe instead of / in addition to SQL
-        # test_load_ipo_universe()
-        test_load_ipo_universe_sql()
+        # csv_path = (
+        #     Path(__file__).parent.parent
+        #     / "symbol_universes"
+        #     / "ipo_before_2020_all_fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income.csv"
+        # )
+        # universe_name_csv = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income"
+        # load_symbol_universe(csv_path, universe_name_csv, start_fresh=False)
     else:
         main()
