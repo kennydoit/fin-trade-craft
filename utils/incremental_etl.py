@@ -249,7 +249,7 @@ class WatermarkManager:
         query = """
             SELECT ls.symbol_id, ls.symbol, 
                    ew.last_fiscal_date, ew.last_successful_run, ew.consecutive_failures
-            FROM extracted.listing_status ls
+            FROM source.listing_status ls
             LEFT JOIN source.extraction_watermarks ew ON ew.symbol_id = ls.symbol_id 
                                                        AND ew.table_name = %s
             WHERE ls.asset_type = 'Stock'
@@ -314,7 +314,7 @@ class WatermarkManager:
         base_query = """
             SELECT ls.symbol_id, ls.symbol, 
                    ew.last_fiscal_date, ew.last_successful_run, ew.consecutive_failures
-            FROM extracted.listing_status ls
+            FROM source.listing_status ls
             LEFT JOIN source.extraction_watermarks ew ON ew.symbol_id = ls.symbol_id 
                                                        AND ew.table_name = %s
             WHERE LOWER(ls.status) = 'active'
