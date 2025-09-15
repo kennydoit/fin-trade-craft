@@ -2,9 +2,9 @@
 # universe: may be a UUID (universe_id) or a universe_name string present in transformed.symbol_universes
 # If you prefer to lock to a specific load, replace the universe value with the matching universe_id UUID.
 
-universe: IPO_Before_2020_All_Fundamentals_GT500_OCHLV_500MM_to_1B_Net_Income
+universe: IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income
 
-folder: IPO2020_500Mto1B_{timestamp}
+folder: IPO2020_500Mto1B_20250821T202532Z
 
 collection_dates:
   start_date: '2020-01-01'
@@ -12,15 +12,20 @@ collection_dates:
 
 data_switches:
   fundamentals:
-    balance_sheet: true
+    balance_sheet:
+      enabled: true
       offset: 45
-    cash_flow: true
+    cash_flow:
+      enabled: true
       offset: 45
-    income_statement: true
+    income_statement:
+      enabled: true
       offset: 45
-    earnings_call_transcripts: true
+    earnings_call_transcripts:
+      enabled: true
       offset: 45
-    insider_transactions: true
+    insider_transactions:
+      enabled: true
       offset: 5
   fred:
     commodities: true

@@ -8,6 +8,17 @@ import json
 import uuid
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
+from pathlib import Path
+import sys
+
+# Add symbol screener for enhanced pre-screening
+sys.path.append(str(Path(__file__).parent))
+try:
+    from symbol_screener import SymbolScreener
+    SYMBOL_SCREENER_AVAILABLE = True
+except ImportError:
+    SYMBOL_SCREENER_AVAILABLE = False
+    print("⚠️ Symbol screener not available - pre-screening disabled")
 
 
 class DateUtils:
@@ -233,9 +244,116 @@ class WatermarkManager:
     def get_symbols_needing_processing(self, table_name: str, 
                                      staleness_hours: int = 24,
                                      max_failures: int = 3,
-                                     limit: Optional[int] = None) -> List[Dict[str, Any]]:
+                                     limit: Optional[int] = None,
+                                     quarterly_gap_detection: bool = True,
+                                     reporting_lag_days: int = 45,
+                                     enable_pre_screening: bool = True) -> List[Dict[str, Any]]:
         """
-        Get list of symbols that need processing.
+        Get list of symbols that need processing with enhanced quarterly gap detection and pre-screening.
+        
+        Args:
+            table_name: Name of the table being tracked
+            staleness_hours: How many hours before data is considered stale
+            max_failures: Maximum consecutive failures before giving up
+            limit: Maximum number of symbols to return
+            quarterly_gap_detection: Enable quarterly gap detection for financial statements
+            reporting_lag_days: Days after quarter end before data should be available
+            enable_pre_screening: Enable symbol pre-screening to avoid likely failures
+            
+        Returns:
+            List of symbol data needing processing
+        """
+        # Get base symbols using existing logic
+        if quarterly_gap_detection and table_name in ['balance_sheet', 'cash_flow', 'income_statement']:
+            base_symbols = self._get_symbols_with_quarterly_gap_detection(
+                table_name, staleness_hours, max_failures, None, reporting_lag_days  # Don't limit here
+            )
+        else:
+            base_symbols = self._get_symbols_without_quarterly_gap_detection(
+                table_name, staleness_hours, max_failures, None  # Don't limit here
+            )
+        
+        # Apply pre-screening if enabled and available
+        if enable_pre_screening and SYMBOL_SCREENER_AVAILABLE:
+            print(f"🔍 Pre-screening {len(base_symbols)} symbols to avoid likely failures...")
+            
+            # Convert symbols to format expected by screener
+            symbol_data_for_screening = []
+            for sym in base_symbols:
+                # Get additional metadata from database
+                query = """
+                    SELECT ls.symbol, ls.asset_type, ls.status, ls.delisting_date, 
+                           ls.ipo_date, ls.exchange, ls.name
+                    FROM source.listing_status ls
+                    WHERE ls.symbol_id = %s
+                """
+                result = self.db.fetch_query(query, [sym['symbol_id']])
+                if result:
+                    row = result[0]
+                    symbol_data_for_screening.append({
+                        'symbol': row[0],
+                        'asset_type': row[1],
+                        'status': row[2],
+                        'delisting_date': row[3],
+                        'ipo_date': row[4],
+                        'exchange': row[5],
+                        'name': row[6],
+                        'consecutive_failures': sym.get('consecutive_failures', 0),
+                        'symbol_id': sym['symbol_id'],
+                        'last_fiscal_date': sym.get('last_fiscal_date'),
+                        'last_successful_run': sym.get('last_successful_run')
+                    })
+            
+            # Apply screening
+            screening_result = SymbolScreener.filter_symbols_for_fundamentals(
+                symbol_data_for_screening,
+                enable_failure_blacklist=True,
+                max_consecutive_failures=max_failures,
+                enable_ipo_filter=False  # Keep this optional for now
+            )
+            
+            # Convert back to original format
+            screened_symbols = []
+            for eligible_sym in screening_result['eligible_symbols']:
+                # Find the original symbol data
+                for orig_sym in base_symbols:
+                    if orig_sym['symbol_id'] == eligible_sym['symbol_id']:
+                        screened_symbols.append(orig_sym)
+                        break
+            
+            # Print screening results
+            stats = screening_result['statistics']
+            print(f"✅ Pre-screening results:")
+            print(f"   - Input symbols: {stats['total_input']}")
+            print(f"   - Eligible symbols: {stats['eligible_count']}")
+            print(f"   - Excluded symbols: {stats['excluded_count']}")
+            print(f"   - Eligibility rate: {stats['eligibility_rate']:.1f}%")
+            
+            if stats['exclusion_reasons']:
+                print(f"   - Top exclusion reasons:")
+                for reason, count in sorted(stats['exclusion_reasons'].items(), 
+                                          key=lambda x: x[1], reverse=True)[:5]:
+                    print(f"     • {reason}: {count}")
+            
+            final_symbols = screened_symbols
+        else:
+            if enable_pre_screening and not SYMBOL_SCREENER_AVAILABLE:
+                print("⚠️ Pre-screening requested but not available - proceeding without screening")
+            final_symbols = base_symbols
+        
+        # Apply limit after screening
+        if limit and len(final_symbols) > limit:
+            print(f"📊 Limiting to {limit} symbols (from {len(final_symbols)} eligible)")
+            final_symbols = final_symbols[:limit]
+        
+        return final_symbols
+    
+    def _get_symbols_without_quarterly_gap_detection(self, table_name: str,
+                                                   staleness_hours: int,
+                                                   max_failures: int,
+                                                   limit: Optional[int]) -> List[Dict[str, Any]]:
+        """
+        Original time-based logic for tables without quarterly gap detection.
         
         Args:
             table_name: Name of the table being tracked
@@ -291,6 +409,120 @@ class WatermarkManager:
             for row in results
         ]
     
+    def _get_symbols_with_quarterly_gap_detection(self, table_name: str,
+                                                staleness_hours: int,
+                                                max_failures: int,
+                                                limit: Optional[int],
+                                                reporting_lag_days: int) -> List[Dict[str, Any]]:
+        """
+        Get symbols with quarterly gap detection logic for financial statements.
+        
+        This method identifies symbols that are missing expected quarterly data
+        based on the current date and typical reporting lags.
+        """
+        query = """
+            WITH quarterly_analysis AS (
+                SELECT 
+                    ls.symbol_id, 
+                    ls.symbol,
+                    ew.last_fiscal_date,
+                    ew.last_successful_run,
+                    ew.consecutive_failures,
+                    -- Calculate expected latest quarter based on current date and reporting lag
+                    -- Work backwards from current date to find the latest quarter that should have data available
+                    CASE 
+                        -- Current quarter minus 1 day = previous quarter end
+                        WHEN CURRENT_DATE >= DATE_TRUNC('quarter', CURRENT_DATE) + INTERVAL %s
+                        THEN (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '1 day')::date
+                        -- Previous quarter minus 1 day = quarter before that  
+                        WHEN CURRENT_DATE >= DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '3 months' + INTERVAL %s
+                        THEN (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '3 months' - INTERVAL '1 day')::date
+                        -- Two quarters ago
+                        WHEN CURRENT_DATE >= DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '6 months' + INTERVAL %s
+                        THEN (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '6 months' - INTERVAL '1 day')::date
+                        -- Three quarters ago
+                        ELSE (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '9 months' - INTERVAL '1 day')::date
+                    END as expected_latest_quarter,
+                    -- Check if there's a quarterly gap or staleness
+                    CASE 
+                        WHEN ew.last_fiscal_date IS NULL THEN TRUE -- Never processed
+                        WHEN ew.last_fiscal_date < (
+                            CASE 
+                                WHEN CURRENT_DATE >= DATE_TRUNC('quarter', CURRENT_DATE) + INTERVAL %s
+                                THEN (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '1 day')::date
+                                WHEN CURRENT_DATE >= DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '3 months' + INTERVAL %s
+                                THEN (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '3 months' - INTERVAL '1 day')::date
+                                WHEN CURRENT_DATE >= DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '6 months' + INTERVAL %s
+                                THEN (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '6 months' - INTERVAL '1 day')::date
+                                ELSE (DATE_TRUNC('quarter', CURRENT_DATE) - INTERVAL '9 months' - INTERVAL '1 day')::date
+                            END
+                        ) THEN TRUE -- Has quarterly gap
+                        WHEN ew.last_successful_run < NOW() - INTERVAL %s THEN TRUE -- Time-based staleness
+                        ELSE FALSE
+                    END as needs_processing
+                FROM source.listing_status ls
+                LEFT JOIN source.extraction_watermarks ew ON ew.symbol_id = ls.symbol_id 
+                                                           AND ew.table_name = %s
+                WHERE ls.asset_type = 'Stock'
+                  AND LOWER(ls.status) = 'active'
+                  AND ls.symbol NOT LIKE %s   -- Exclude warrants
+                  AND ls.symbol NOT LIKE %s     -- Exclude rights ending in R
+                  AND ls.symbol NOT LIKE %s   -- Exclude rights with dots
+                  AND ls.symbol NOT LIKE %s   -- Exclude preferred shares
+                  AND ls.symbol NOT LIKE %s     -- Exclude units (SPACs)
+                  AND COALESCE(ew.consecutive_failures, 0) < %s  -- Not permanently failed
+            )
+            SELECT symbol_id, symbol, last_fiscal_date, last_successful_run, consecutive_failures,
+                   expected_latest_quarter, needs_processing
+            FROM quarterly_analysis 
+            WHERE needs_processing = TRUE
+            ORDER BY 
+                -- Prioritize quarterly gaps over time-based staleness
+                CASE WHEN last_fiscal_date IS NULL THEN 0 -- Never processed (highest priority)
+                     WHEN last_fiscal_date < expected_latest_quarter THEN 1 -- Has quarterly gap (high priority)
+                     ELSE 2 -- Time-stale only (lower priority)
+                END,
+                COALESCE(last_successful_run, '1900-01-01'::timestamp) ASC,
+                LENGTH(symbol) ASC,
+                symbol ASC
+        """
+        
+        params = [
+            f'{reporting_lag_days} days',  # Current quarter check
+            f'{reporting_lag_days} days',  # Previous quarter check  
+            f'{reporting_lag_days} days',  # Two quarters ago check
+            f'{reporting_lag_days} days',  # Current quarter gap check
+            f'{reporting_lag_days} days',  # Previous quarter gap check
+            f'{reporting_lag_days} days',  # Two quarters ago gap check
+            f'{staleness_hours} hours',    # Time staleness
+            table_name,                    # Table name
+            '%WS%',                        # Warrants
+            '%R',                          # Rights ending in R
+            '%.R%',                        # Rights with dots (like SYMBOL.R)
+            '%P%',                         # Preferred shares
+            '%U',                          # Units
+            max_failures                   # Max failures
+        ]
+        
+        if limit:
+            query += " LIMIT %s"
+            params.append(limit)
+        
+        results = self.db.fetch_query(query, params)
+        
+        return [
+            {
+                'symbol_id': row[0],
+                'symbol': row[1],
+                'last_fiscal_date': row[2],
+                'last_successful_run': row[3],
+                'consecutive_failures': row[4] or 0,
+                'expected_latest_quarter': row[5],
+                'has_quarterly_gap': row[2] is None or (row[5] and row[2] < row[5])
+            }
+            for row in results
+        ]
+    
     def get_symbols_needing_processing_with_filters(self, table_name: str, 
                                                   staleness_hours: int = 24,
                                                   max_failures: int = 3,
@@ -318,11 +550,11 @@ class WatermarkManager:
             LEFT JOIN source.extraction_watermarks ew ON ew.symbol_id = ls.symbol_id 
                                                        AND ew.table_name = %s
             WHERE LOWER(ls.status) = 'active'
-              AND ls.symbol NOT LIKE '%%WS%%'   -- Exclude warrants
-              AND ls.symbol NOT LIKE '%%R'     -- Exclude rights  
-              AND ls.symbol NOT LIKE '%%R%%'   -- Exclude rights variants
-              AND ls.symbol NOT LIKE '%%P%%'   -- Exclude preferred shares
-              AND ls.symbol NOT LIKE '%%U'      -- Exclude units (SPACs)
+              AND ls.symbol NOT LIKE %s   -- Exclude warrants
+              AND ls.symbol NOT LIKE %s     -- Exclude rights ending in R
+              AND ls.symbol NOT LIKE %s   -- Exclude rights with dots
+              AND ls.symbol NOT LIKE %s   -- Exclude preferred shares
+              AND ls.symbol NOT LIKE %s      -- Exclude units (SPACs)
               AND (
                   ew.last_successful_run IS NULL  -- Never processed
                   OR ew.last_successful_run < NOW() - INTERVAL '1 hour' * %s  -- Stale
@@ -330,9 +562,7 @@ class WatermarkManager:
               AND COALESCE(ew.consecutive_failures, 0) < %s  -- Not permanently failed
         """
         
-        params = [table_name, staleness_hours, max_failures]
-        
-        # Add asset type filter
+        params = [table_name, '%WS%', '%R', '%.R%', '%P%', '%U', staleness_hours, max_failures]
         if asset_type_filter:
             placeholders = ",".join(["%s" for _ in asset_type_filter])
             base_query += f" AND ls.asset_type IN ({placeholders})"
