@@ -97,6 +97,31 @@ class EconomicIndicatorsExtractor:
         # Initialize adaptive rate limiter for time series processing
         self.rate_limiter = AdaptiveRateLimiter(ExtractorType.TIME_SERIES, verbose=True)
 
+    def _safe_json_dumps(self, response_data, record_count):
+        """Safely serialize JSON response, handling large datasets that may fail."""
+        try:
+            # For very large datasets (>10k records), store a summary instead of full response
+            if record_count > 10000:
+                summary = {
+                    "data_summary": f"Large dataset with {record_count:,} records",
+                    "metadata": response_data.get("Meta Data", {}) if isinstance(response_data, dict) else {},
+                    "record_count": record_count,
+                    "extraction_time": datetime.now().isoformat(),
+                    "note": "Full response truncated due to size"
+                }
+                return json.dumps(summary)
+            else:
+                return json.dumps(response_data)
+        except (TypeError, ValueError, MemoryError) as e:
+            # If JSON serialization fails, store error info
+            error_summary = {
+                "error": "JSON serialization failed",
+                "error_type": str(type(e).__name__),
+                "record_count": record_count,
+                "extraction_time": datetime.now().isoformat()
+            }
+            return json.dumps(error_summary)
+
     def _ensure_source_schema(self):
         """Create source schema tables if they don't exist."""
         with self.db_manager as db:
@@ -290,7 +315,7 @@ class EconomicIndicatorsExtractor:
                 row['unit'],
                 value,
                 row['name'],
-                json.dumps(response_for_json),  # Store full API response
+                self._safe_json_dumps(response_for_json, len(df)),  # Safe JSON serialization for large responses
                 row['api_response_status'],
                 run_id,
                 content_hash,

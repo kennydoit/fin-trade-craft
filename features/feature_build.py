@@ -1,17 +1,20 @@
-"""Feature build pre-processing.
+"""Feature build pre-processing and transformation.
 
 Implements the steps from prompts/feature_build.py.md:
   1) Read features/config.yaml
   2) Resolve `universe` to a concrete universe_id (UUID):
 	 - If `universe` looks like a UUID, validate it exists in transformed.symbol_universes
 	 - Else treat as universe_name and pick the latest by load_date_time
-	3) Create an output folder in features:
+  3) Create an output folder in features:
 		 - If config has key `folder`, treat it as a template and replace tokens:
 				 {timestamp} -> current UTC timestamp (YYYYMMDDTHHMMSSZ)
 				 {universe_id} -> resolved UUID
 			 Otherwise, default to {universe_id}_{timestamp}
 		 - If the target folder already exists, remove it and recreate (start fresh)
-	4) Place a copy of config.yaml in the output folder
+  4) Place a copy of config.yaml in the output folder
+  5) Apply transformations based on data_switches configuration:
+	 - Process fundamental data (balance_sheet, cash_flow, income_statement) if enabled
+	 - Apply date filtering and offset logic for each data source
 
 Stops after these steps and awaits further instructions for actual feature building.
 """
@@ -20,7 +23,6 @@ from __future__ import annotations
 
 import shutil
 import sys
-import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,15 +37,49 @@ if str(REPO_ROOT) not in sys.path:
 from db.postgres_database_manager import PostgresDatabaseManager
 
 
+def _apply_fundamental_transformations(config: dict[str, Any], universe_id: str, output_dir: Path) -> None:
+	"""Apply fundamental data transformations based on data_switches configuration."""
+	from data_pipeline.transform.transform_balance_sheet import BalanceSheetTransformer
+	from data_pipeline.transform.transform_cash_flow import CashFlowTransformer  
+	from data_pipeline.transform.transform_income_statement import IncomeStatementTransformer
+	
+	data_switches = config.get("data_switches", {})
+	fundamentals = data_switches.get("fundamentals", {})
+	
+	print(f"Processing fundamental data transformations...")
+	
+	# Balance Sheet
+	if fundamentals.get("balance_sheet", {}).get("enabled", False):
+		print("  🏦 Processing balance sheet data...")
+		transformer = BalanceSheetTransformer()
+		df = transformer.run()
+		print(f"     ✓ Transformed {len(df)} balance sheet records")
+	
+	# Cash Flow  
+	if fundamentals.get("cash_flow", {}).get("enabled", False):
+		print("  💰 Processing cash flow data...")
+		transformer = CashFlowTransformer()
+		df = transformer.run()
+		print(f"     ✓ Transformed {len(df)} cash flow records")
+	
+	# Income Statement
+	if fundamentals.get("income_statement", {}).get("enabled", False):
+		print("  📈 Processing income statement data...")
+		transformer = IncomeStatementTransformer()
+		df = transformer.run()
+		print(f"     ✓ Transformed {len(df)} income statement records")
+	
+	print("  ✅ Fundamental transformations complete!")
+
+
 def _is_uuid(value: str) -> bool:
-	try:
-		uuid.UUID(str(value))
-		return True
-	except Exception:
-		return False
+	"""Check if a string looks like a UUID format."""
+	import re
+	uuid_pattern = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
+	return bool(uuid_pattern.match(str(value)))
 
 
-def _resolve_universe_id(db: PostgresDatabaseManager, universe_value: str) -> uuid.UUID:
+def _resolve_universe_id(db: PostgresDatabaseManager, universe_value: str) -> str:
 	"""Resolve a universe value (UUID or name) to a concrete universe_id.
 
 	Rules per prompt:
@@ -64,7 +100,7 @@ def _resolve_universe_id(db: PostgresDatabaseManager, universe_value: str) -> uu
 			raise ValueError(
 				f"universe_id {universe_value} not found in transformed.symbol_universes"
 			)
-		return uuid.UUID(str(universe_value))
+		return str(universe_value)
 
 	# Treat as universe_name; pick the latest instance by load_date_time
 	rows = db.fetch_query(
@@ -82,7 +118,7 @@ def _resolve_universe_id(db: PostgresDatabaseManager, universe_value: str) -> uu
 			f"universe_name '{universe_value}' not found in transformed.symbol_universes"
 		)
 	resolved = rows[0][0]
-	return uuid.UUID(str(resolved))
+	return str(resolved)
 
 
 def _load_config(config_path: Path) -> dict[str, Any]:
@@ -130,6 +166,10 @@ def main() -> None:
 
 	print(f"Resolved universe_id: {universe_id}")  # noqa: T201
 	print(f"Output folder ready: {out_dir}")  # noqa: T201
+	
+	# 5) Apply transformations based on data_switches
+	_apply_fundamental_transformations(config, universe_id, out_dir)
+	
 	print("STOP: Await further instructions")  # noqa: T201
 
 

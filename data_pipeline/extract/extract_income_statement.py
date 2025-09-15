@@ -425,19 +425,23 @@ class IncomeStatementExtractor:
             }
     
     def run_incremental_extraction(self, limit: Optional[int] = None, 
-                                 staleness_hours: int = 24) -> Dict[str, Any]:
+                                 staleness_hours: int = 24, 
+                                 quarterly_gap_detection: bool = True,
+                                 enable_pre_screening: bool = True) -> Dict[str, Any]:
         """
         Run incremental extraction for symbols that need processing.
         
         Args:
             limit: Maximum number of symbols to process
             staleness_hours: Hours before data is considered stale
+            quarterly_gap_detection: Enable quarterly gap detection for financial statements
+            enable_pre_screening: Enable symbol pre-screening to avoid likely failures
             
         Returns:
             Processing summary
         """
-        print(f"🚀 Starting incremental income statement extraction...")
-        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}")
+        print(f"🚀 Starting incremental income statement extraction with adaptive rate limiting...")
+        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}, quarterly_gap_detection={quarterly_gap_detection}, pre_screening={enable_pre_screening}")
         
         with self._get_db_manager() as db:
             # Ensure schema exists
@@ -445,9 +449,14 @@ class IncomeStatementExtractor:
             
             watermark_mgr = self._initialize_watermark_manager(db)
             
-            # Get symbols needing processing
+            # Get symbols needing processing with quarterly gap detection and pre-screening
             symbols_to_process = watermark_mgr.get_symbols_needing_processing(
-                self.table_name, staleness_hours=staleness_hours, limit=limit
+                self.table_name, 
+                staleness_hours=staleness_hours, 
+                limit=limit,
+                quarterly_gap_detection=quarterly_gap_detection,
+                reporting_lag_days=45,  # Standard 45-day reporting lag for quarterly data
+                enable_pre_screening=enable_pre_screening  # Enable enhanced symbol pre-screening
             )
             
             print(f"Found {len(symbols_to_process)} symbols needing processing")
@@ -514,13 +523,19 @@ def main():
     parser.add_argument("--limit", type=int, help="Maximum number of symbols to process")
     parser.add_argument("--staleness-hours", type=int, default=24, 
                        help="Hours before data is considered stale (default: 24)")
+    parser.add_argument("--no-quarterly-gap-detection", action="store_true",
+                       help="Disable quarterly gap detection (use only time-based staleness)")
+    parser.add_argument("--no-pre-screening", action="store_true",
+                       help="Disable symbol pre-screening (process all symbols regardless of type)")
     
     args = parser.parse_args()
     
     extractor = IncomeStatementExtractor()
     result = extractor.run_incremental_extraction(
         limit=args.limit,
-        staleness_hours=args.staleness_hours
+        staleness_hours=args.staleness_hours,
+        quarterly_gap_detection=not args.no_quarterly_gap_detection,
+        enable_pre_screening=not args.no_pre_screening
     )
     
     # Exit with appropriate code
