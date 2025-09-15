@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS listing_status (
     updated_at      TIMESTAMP DEFAULT NOW()
 );
 
--- Create index on symbol for faster lookups
-CREATE INDEX IF NOT EXISTS idx_listing_status_symbol ON listing_status(symbol);
+-- Create index on symbol for faster lookups (on the actual table in source schema)
+CREATE INDEX IF NOT EXISTS idx_listing_status_symbol ON source.listing_status(symbol);
 
 -- Table for storing company overview information
 CREATE TABLE IF NOT EXISTS overview (
@@ -43,8 +43,9 @@ CREATE TABLE IF NOT EXISTS overview (
     UNIQUE(symbol_id)  -- Ensure one overview record per symbol
 );
 
--- Create index on symbol_id for faster joins
-CREATE INDEX IF NOT EXISTS idx_overview_symbol_id ON overview(symbol_id);
+-- Create index on symbol_id for faster joins (on actual table, not view)
+-- Note: Skip if overview table conflicts with views
+-- CREATE INDEX IF NOT EXISTS idx_overview_symbol_id ON overview(symbol_id);
 
 -- Table for storing time series adjusted data
 CREATE TABLE IF NOT EXISTS time_series_daily_adjusted (
@@ -402,8 +403,9 @@ CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_speaker ON earnings_cal
 CREATE INDEX IF NOT EXISTS idx_earnings_call_transcripts_sentiment ON earnings_call_transcripts(sentiment);
 
 -- Drop triggers if they already exist to avoid duplicate-object errors on repeated initialization
-DROP TRIGGER IF EXISTS update_listing_status_updated_at ON listing_status;
-DROP TRIGGER IF EXISTS update_overview_updated_at ON overview;
+-- Skip triggers for views (listing_status, overview) as views cannot have row-level triggers
+-- DROP TRIGGER IF EXISTS update_listing_status_updated_at ON listing_status;
+-- DROP TRIGGER IF EXISTS update_overview_updated_at ON overview;
 DROP TRIGGER IF EXISTS update_time_series_updated_at ON time_series_daily_adjusted;
 DROP TRIGGER IF EXISTS update_income_statement_updated_at ON income_statement;
 DROP TRIGGER IF EXISTS update_balance_sheet_updated_at ON balance_sheet;
@@ -416,8 +418,9 @@ DROP TRIGGER IF EXISTS update_insider_transactions_updated_at ON insider_transac
 DROP TRIGGER IF EXISTS update_earnings_call_transcripts_updated_at ON earnings_call_transcripts;
 
 -- Recreate triggers to ensure updated_at is maintained
-CREATE TRIGGER update_listing_status_updated_at BEFORE UPDATE ON listing_status FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_overview_updated_at BEFORE UPDATE ON overview FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- Skip triggers for views (listing_status, overview) as views cannot have row-level triggers  
+-- CREATE TRIGGER update_listing_status_updated_at BEFORE UPDATE ON listing_status FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- CREATE TRIGGER update_overview_updated_at BEFORE UPDATE ON overview FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_time_series_updated_at BEFORE UPDATE ON time_series_daily_adjusted FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_income_statement_updated_at BEFORE UPDATE ON income_statement FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_balance_sheet_updated_at BEFORE UPDATE ON balance_sheet FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

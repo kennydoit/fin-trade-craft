@@ -6,7 +6,7 @@ table. It accepts input data either as a CSV file path, a SQL query string, or a
 :class:`pandas.DataFrame`. Two additional columns are automatically generated
 for each load:
 
-* ``universe_id`` – a random UUID shared across all rows in the load
+* ``universe_id`` – a simple readable ID based on source type (S######, C######, D######)
 * ``load_date_time`` – the current timestamp in UTC
 
 The required input columns are ``symbol``, ``exchange`` and ``asset_type``. A
@@ -17,7 +17,7 @@ recreated before loading the new records.
 The table schema is created as::
 
     transformed.symbol_universes(
-        universe_id       UUID,
+        universe_id       VARCHAR,     -- Simple format: S123456, C123456, D123456  
         universe_name     VARCHAR,
         symbol            VARCHAR,
         exchange          VARCHAR,
@@ -35,8 +35,8 @@ identifier ``symbol_universe_id``.
 from __future__ import annotations
 
 import argparse
+import random
 import sys
-import uuid
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
@@ -48,13 +48,70 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 
 
+def _generate_simple_universe_id(data_source_type: str, db: PostgresDatabaseManager) -> str:
+    """Generate a simple universe ID based on data source type.
+    
+    Parameters
+    ----------
+    data_source_type:
+        Type of data source: 'S' for SQL, 'C' for CSV, 'D' for DataFrame
+    db:
+        Database manager for checking uniqueness
+        
+    Returns
+    -------
+    str
+        Universe ID in format: {type}{6-digit-number} (e.g., 'S123456', 'C987654')
+    """
+    max_attempts = 100
+    
+    for attempt in range(max_attempts):
+        # Generate 6-digit random number
+        number = random.randint(100000, 999999)
+        universe_id = f"{data_source_type}{number}"
+        
+        # Check if ID already exists
+        check_query = "SELECT COUNT(*) FROM transformed.symbol_universes WHERE universe_id = %s"
+        try:
+            result = db.fetch_query(check_query, (universe_id,))
+            if result and result[0][0] == 0:  # ID doesn't exist
+                return universe_id
+        except Exception:
+            # If table doesn't exist yet, the ID is definitely unique
+            return universe_id
+    
+    # Enhanced fallback: Use timestamp + microseconds + attempt counter for guaranteed uniqueness
+    now = datetime.now()
+    timestamp_micro = f"{int(now.timestamp())}{now.microsecond:06d}"
+    
+    # Try timestamp-based IDs with incrementing suffix
+    for suffix in range(100):
+        # Take last 5 digits of timestamp+microseconds + 1 digit suffix
+        unique_suffix = f"{timestamp_micro[-5:]}{suffix}"[:6].zfill(6)
+        universe_id = f"{data_source_type}{unique_suffix}"
+        
+        # Final check for timestamp-based ID
+        check_query = "SELECT COUNT(*) FROM transformed.symbol_universes WHERE universe_id = %s"
+        try:
+            result = db.fetch_query(check_query, (universe_id,))
+            if result and result[0][0] == 0:
+                return universe_id
+        except Exception:
+            return universe_id
+    
+    # Ultimate fallback - this should never happen
+    import uuid
+    fallback_id = str(uuid.uuid4()).replace('-', '')[:6]
+    return f"{data_source_type}{fallback_id}"
+
+
 def _ensure_table(db: PostgresDatabaseManager) -> None:
     """Create ``transformed.symbol_universes`` if it does not exist."""
     if not db.table_exists("symbol_universes", "transformed"):
         db.execute_query("CREATE SCHEMA IF NOT EXISTS transformed")
         create_sql = """
             CREATE TABLE transformed.symbol_universes (
-                universe_id UUID NOT NULL,
+                universe_id VARCHAR(10) NOT NULL,
                 universe_name VARCHAR NOT NULL,
                 symbol VARCHAR NOT NULL,
                 exchange VARCHAR NOT NULL,
@@ -78,7 +135,7 @@ def load_symbol_universe(
     universe_name: str,
     *,
     start_fresh: bool = False,
-) -> uuid.UUID:
+) -> str:
     """Load a symbol universe into the database.
 
     Parameters
@@ -94,22 +151,27 @@ def load_symbol_universe(
 
     Returns
     -------
-    uuid.UUID
+    str
         The generated ``universe_id`` applied to the loaded rows.
+        Format: S######, C######, or D###### based on data source type.
     """
 
+    # Determine data source type and load data
     if isinstance(data, (str | Path)):
         if Path(str(data)).exists():
             df = pd.read_csv(str(data))
+            source_type = 'C'  # CSV
         else:
             db_tmp = PostgresDatabaseManager()
             db_tmp.connect()
             try:
                 df = db_tmp.fetch_dataframe(str(data))
+                source_type = 'S'  # SQL
             finally:
                 db_tmp.close()
     elif isinstance(data, pd.DataFrame):
         df = data.copy()
+        source_type = 'D'  # DataFrame
     else:
         raise TypeError(
             "data must be a pandas DataFrame, path to CSV, or SQL query string"
@@ -120,7 +182,6 @@ def load_symbol_universe(
     if missing:
         raise ValueError(f"Input data missing required columns: {missing}")
 
-    universe_id = uuid.uuid4()
     load_time = datetime.now(timezone.utc)  # noqa: UP017
 
     db = PostgresDatabaseManager()
@@ -131,13 +192,16 @@ def load_symbol_universe(
         else:
             _ensure_table(db)
 
+        # Generate simple universe ID based on source type
+        universe_id = _generate_simple_universe_id(source_type, db)
+
         insert_rows: list[Sequence[object]] = []
         for _, row in df.iterrows():
             symbol = row["symbol"]
             symbol_id = db.get_symbol_id(symbol)
             insert_rows.append(
                 (
-                    str(universe_id),
+                    universe_id,  # Now a simple string like 'S123456'
                     universe_name,
                     symbol,
                     row["exchange"],
@@ -198,7 +262,7 @@ def main(argv: Iterable[str] | None = None) -> None:
         load_symbol_universe(sql_query, universe_name, start_fresh=start_fresh)
 
 
-def load_universe_from_query(sql_query: str, universe_name: str, start_fresh: bool = False) -> uuid.UUID:
+def load_universe_from_query(sql_query: str, universe_name: str, start_fresh: bool = False) -> str:
     """Load a symbol universe using a SQL query.
     
     Parameters
@@ -212,8 +276,8 @@ def load_universe_from_query(sql_query: str, universe_name: str, start_fresh: bo
         
     Returns
     -------
-    uuid.UUID
-        The generated universe_id applied to the loaded rows
+    str
+        The generated universe_id applied to the loaded rows (format: S######)
     """
     print(f"Loading SQL query universe: {universe_name}")  # noqa: T201
     

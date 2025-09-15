@@ -1,6 +1,6 @@
 """
 Earnings Call Transcripts Extractor using modern incremental ETL architecture.
-Uses source schema, watermarks, content hashing, and deterministic processing.
+Uses source schema, watermarks, content hashing, and adaptive rate limiting for optimal performance.
 """
 
 import os
@@ -21,14 +21,14 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 # API configuration
 STOCK_API_FUNCTION = "EARNINGS_CALL_TRANSCRIPT"
-API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 TABLE_NAME = "earnings_call_transcripts"
 
 class EarningsCallTranscriptsExtractor:
-    """Modern earnings call transcripts extractor with watermarks and incremental processing."""
+    """Modern earnings call transcripts extractor with adaptive rate limiting and incremental processing."""
     
     def __init__(self, db_manager: PostgresDatabaseManager):
         """
@@ -48,6 +48,9 @@ class EarningsCallTranscriptsExtractor:
             raise ValueError("ALPHAVANTAGE_API_KEY not found in environment variables")
         
         self.base_url = "https://www.alphavantage.co/query"
+        
+        # Initialize adaptive rate limiter for earnings calls (very heavy text processing)
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.EARNINGS_CALLS, verbose=True)
         
         # Ensure source table exists
         self._ensure_source_table_exists()
@@ -264,6 +267,9 @@ class EarningsCallTranscriptsExtractor:
         print(f"  Fetching {symbol} {quarter} from API...")
         
         url = f'{self.base_url}?function={STOCK_API_FUNCTION}&symbol={symbol}&quarter={quarter}&apikey={self.api_key}'
+        
+        # Adaptive rate limiting - smart delay based on elapsed time and processing overhead
+        self.rate_limiter.pre_api_call()
         
         try:
             response = requests.get(url, timeout=30)
@@ -646,8 +652,9 @@ class EarningsCallTranscriptsExtractor:
                 print(f"  ↷ Stopping early after 4 consecutive no_data quarters")
                 break
             
-            # Rate limiting
-            time.sleep(API_DELAY_SECONDS)
+            # Notify rate limiter about API call result
+            api_status = 'success' if status == 'success' else ('rate_limited' if 'rate' in str(status).lower() else 'error')
+            self.rate_limiter.post_api_call(api_status)
         
         # Update watermark
         self.watermark_manager.update_watermark(TABLE_NAME, symbol_id, success=has_success)
@@ -694,6 +701,9 @@ class EarningsCallTranscriptsExtractor:
         print(f"   Force refresh: {force_refresh}")
         print(f"   Dry run: {dry_run}")
         
+        # Initialize adaptive rate limiting
+        self.rate_limiter.start_processing()
+        
         # Get symbols needing processing
         symbols_to_process = self.get_symbols_needing_processing(
             staleness_hours=staleness_hours,
@@ -723,7 +733,7 @@ class EarningsCallTranscriptsExtractor:
                 missing = len([q for q in quarters if q not in existing])
                 total_api_calls += min(missing, 20)  # Estimate with early stopping
             
-            estimated_time = (total_api_calls * API_DELAY_SECONDS) / 60
+            estimated_time = (total_api_calls * 0.5) / 60  # Estimated with adaptive rate limiting
             print(f"\n📊 Estimated API calls: {total_api_calls:,}")
             print(f"⏱️  Estimated time: {estimated_time:.1f} minutes")
             

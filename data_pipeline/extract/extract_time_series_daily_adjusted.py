@@ -1,6 +1,6 @@
 """
 Time Series Daily Adjusted Extractor using incremental ETL architecture.
-Uses source schema, watermarks, and deterministic processing.
+Uses source schema, watermarks, and adaptive rate limiting for optimal performance.
 """
 
 import os
@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 # API configuration
 STOCK_API_FUNCTION = "TIME_SERIES_DAILY_ADJUSTED"
@@ -45,7 +46,7 @@ TIME_SERIES_FIELDS = {
 
 
 class TimeSeriesDailyAdjustedExtractor:
-    """Time series daily adjusted extractor with incremental processing."""
+    """Time series daily adjusted extractor with adaptive rate limiting and incremental processing."""
     
     def __init__(self):
         """Initialize the extractor."""
@@ -58,6 +59,9 @@ class TimeSeriesDailyAdjustedExtractor:
         self.schema_name = "source"
         self.db_manager = None
         self.watermark_manager = None
+        
+        # Initialize adaptive rate limiter for time series (heavy processing)
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.TIME_SERIES, verbose=True)
     
     def _get_db_manager(self):
         """Get database manager with context management."""
@@ -155,6 +159,9 @@ class TimeSeriesDailyAdjustedExtractor:
             "outputsize": outputsize,
             "apikey": self.api_key
         }
+        
+        # Adaptive rate limiting - smart delay based on elapsed time and processing overhead
+        self.rate_limiter.pre_api_call()
         
         try:
             response = requests.get(url, params=params, timeout=30)
@@ -376,7 +383,7 @@ class TimeSeriesDailyAdjustedExtractor:
     
     def extract_symbol(self, symbol: str, symbol_id: int, db) -> Dict[str, Any]:
         """
-        Extract time series data for a single symbol.
+        Extract time series data for a single symbol with adaptive rate limiting.
         
         Args:
             symbol: Stock symbol
@@ -387,6 +394,9 @@ class TimeSeriesDailyAdjustedExtractor:
             Processing result summary
         """
         run_id = RunIdGenerator.generate()
+        
+        # Start processing timer for adaptive rate limiter
+        self.rate_limiter.start_processing()
         
         watermark_mgr = self._initialize_watermark_manager(db)
         
@@ -404,7 +414,7 @@ class TimeSeriesDailyAdjustedExtractor:
             if not self._content_has_changed(db, symbol_id, content_hash):
                 print(f"No changes detected for {symbol}, skipping transformation")
                 watermark_mgr.update_watermark(self.table_name, symbol_id, success=True)
-                return {
+                result = {
                     "symbol": symbol,
                     "status": "no_changes",
                     "records_processed": 0,
@@ -427,7 +437,7 @@ class TimeSeriesDailyAdjustedExtractor:
                     self.table_name, symbol_id, latest_date, success=True
                 )
                 
-                return {
+                result = {
                     "symbol": symbol,
                     "status": "success",
                     "records_processed": len(records),
@@ -438,29 +448,34 @@ class TimeSeriesDailyAdjustedExtractor:
             else:
                 # No valid records
                 watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
-                return {
+                result = {
                     "symbol": symbol,
                     "status": "no_valid_records",
                     "records_processed": 0,
                     "run_id": run_id
                 }
         else:
-            # API failure
+            # API failure (rate_limited, error, empty)
             watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
-            return {
+            result = {
                 "symbol": symbol,
                 "status": "api_failure",
                 "error": status,
                 "records_processed": 0,
                 "run_id": run_id
             }
+        
+        # Notify rate limiter about processing result (enables optimization)
+        self.rate_limiter.post_api_call(result["status"])
+        
+        return result
     
     def run_incremental_extraction(self, limit: Optional[int] = None, 
                                  staleness_hours: int = 24,
                                  exchange_filter: Optional[List[str]] = None,
                                  asset_type_filter: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Run incremental extraction for symbols that need processing.
+        Run incremental extraction for symbols that need processing with adaptive rate limiting.
         
         Args:
             limit: Maximum number of symbols to process
@@ -471,7 +486,7 @@ class TimeSeriesDailyAdjustedExtractor:
         Returns:
             Processing summary
         """
-        print(f"🚀 Starting incremental time series extraction...")
+        print(f"🚀 Starting incremental time series extraction with adaptive rate limiting...")
         print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}")
         print(f"Exchange filter: {exchange_filter}")
         print(f"Asset type filter: {asset_type_filter}")
@@ -533,11 +548,12 @@ class TimeSeriesDailyAdjustedExtractor:
                     print(f"⚪ {symbol}: No changes detected")
                 else:
                     results["failed"] += 1
-                    print(f"❌ {symbol}: {result['status']}")
+                    error_detail = result.get("error", result["status"])
+                    print(f"❌ {symbol}: {error_detail}")
                 
-                # Rate limiting
-                if i < len(symbols_to_process):
-                    time.sleep(API_DELAY_SECONDS)
+                # Show periodic performance updates
+                if i % 10 == 0 or i == len(symbols_to_process):
+                    self.rate_limiter.print_performance_summary()
             
             print(f"\n🎯 Incremental extraction completed:")
             print(f"  Symbols processed: {results['symbols_processed']}")
@@ -546,12 +562,17 @@ class TimeSeriesDailyAdjustedExtractor:
             print(f"  Failed: {results['failed']}")
             print(f"  Total records: {results['total_records']}")
             
+            # Final performance summary
+            print("\n" + "="*60)
+            self.rate_limiter.print_performance_summary()
+            print("="*60)
+            
             return results
 
 
 def main():
     """Main execution function."""
-    parser = argparse.ArgumentParser(description="Time Series Daily Adjusted Extractor")
+    parser = argparse.ArgumentParser(description="Time Series Daily Adjusted Extractor with Adaptive Rate Limiting")
     parser.add_argument("--limit", type=int, help="Maximum number of symbols to process")
     parser.add_argument("--staleness-hours", type=int, default=24, 
                        help="Hours before data is considered stale (default: 24)")
@@ -585,29 +606,23 @@ if __name__ == "__main__":
 # python extract_time_series_daily_adjusted.py --exchanges NYSE NASDAQ --asset-types Stock
 
 # -----------------------------------------------------------------------------
-# Example commands (PowerShell):
+# Example commands (PowerShell) - Now with Adaptive Rate Limiting:
 # 
-# Basic incremental extraction (process up to 50 symbols, 24-hour staleness):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50
-#
-# Process only 10 symbols (useful for testing):
+# Test adaptive rate limiting with small batch:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 10
 #
-# Aggressive refresh (1-hour staleness, process 25 symbols):
+# Optimal batch size for throughput testing:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 25 --staleness-hours 1
 #
-# Daily batch processing (6-hour staleness, no limit):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --staleness-hours 6
+# Production batch processing with automatic optimization:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --staleness-hours 24
 #
-# Large batch processing (process 100 symbols, 24-hour staleness):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 100 --staleness-hours 24
+# Large batch to see maximum throughput improvements:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 100 --staleness-hours 6
 #
-# Force refresh of recent data (1-hour staleness, 50 symbols):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --staleness-hours 1
-#
-# Extract only NYSE stocks:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 25 --exchanges NYSE --asset-types Stock
-#
-# Extract ETFs from major exchanges:
+# ETF-focused extraction with optimization:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --exchanges NYSE NASDAQ "NYSE ARCA" --asset-types ETF
+#
+# Performance testing - aggressive staleness for maximum throughput measurement:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --staleness-hours 1
 # -----------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """
 Balance Sheet Extractor using incremental ETL architecture.
-Uses source schema, watermarks, and deterministic processing.
+Uses source schema, watermarks, and adaptive rate limiting for optimal performance.
 """
 
 import os
@@ -19,10 +19,10 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 # API configuration
 STOCK_API_FUNCTION = "BALANCE_SHEET"
-API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
 # Schema-driven field mapping configuration
 BALANCE_SHEET_FIELDS = {
@@ -71,7 +71,7 @@ BALANCE_SHEET_FIELDS = {
 
 
 class BalanceSheetExtractor:
-    """Balance sheet extractor with incremental processing."""
+    """Balance sheet extractor with adaptive rate limiting and incremental processing."""
     
     def __init__(self):
         """Initialize the extractor."""
@@ -84,6 +84,9 @@ class BalanceSheetExtractor:
         self.schema_name = "source"
         self.db_manager = None
         self.watermark_manager = None
+        
+        # Initialize adaptive rate limiter for fundamentals (light processing)
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.FUNDAMENTALS, verbose=True)
     
     def _get_db_manager(self):
         """Get database manager with context management."""
@@ -146,6 +149,9 @@ class BalanceSheetExtractor:
             "symbol": symbol,
             "apikey": self.api_key
         }
+        
+        # Adaptive rate limiting - smart delay based on elapsed time and processing overhead
+        self.rate_limiter.pre_api_call()
         
         try:
             print(f"Fetching data from: {url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}")
@@ -370,7 +376,7 @@ class BalanceSheetExtractor:
     
     def extract_symbol(self, symbol: str, symbol_id: int, db) -> Dict[str, Any]:
         """
-        Extract balance sheet data for a single symbol.
+        Extract balance sheet data for a single symbol with adaptive rate limiting.
         
         Args:
             symbol: Stock symbol
@@ -381,6 +387,9 @@ class BalanceSheetExtractor:
             Processing result summary
         """
         run_id = RunIdGenerator.generate()
+        
+        # Start processing timer for adaptive rate limiter
+        self.rate_limiter.start_processing()
         
         watermark_mgr = self._initialize_watermark_manager(db)
         
@@ -421,7 +430,7 @@ class BalanceSheetExtractor:
                     self.table_name, symbol_id, latest_fiscal_date, success=True
                 )
                 
-                return {
+                result = {
                     "symbol": symbol,
                     "status": "success",
                     "records_processed": len(records),
@@ -432,22 +441,27 @@ class BalanceSheetExtractor:
             else:
                 # No valid records
                 watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
-                return {
+                result = {
                     "symbol": symbol,
                     "status": "no_valid_records",
                     "records_processed": 0,
                     "run_id": run_id
                 }
         else:
-            # API failure
+            # API failure (rate_limited, error, empty)
             watermark_mgr.update_watermark(self.table_name, symbol_id, success=False)
-            return {
+            result = {
                 "symbol": symbol,
                 "status": "api_failure",
                 "error": status,
                 "records_processed": 0,
                 "run_id": run_id
             }
+        
+        # Notify rate limiter about processing result (enables optimization)
+        self.rate_limiter.post_api_call(result["status"])
+        
+        return result
     
     def run_incremental_extraction(self, limit: Optional[int] = None, 
                                  staleness_hours: int = 24) -> Dict[str, Any]:
@@ -461,7 +475,7 @@ class BalanceSheetExtractor:
         Returns:
             Processing summary
         """
-        print(f"🚀 Starting incremental balance sheet extraction...")
+        print(f"🚀 Starting incremental balance sheet extraction with adaptive rate limiting...")
         print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}")
         
         with self._get_db_manager() as db:
@@ -517,11 +531,12 @@ class BalanceSheetExtractor:
                     print(f"⚪ {symbol}: No changes detected")
                 else:
                     results["failed"] += 1
-                    print(f"❌ {symbol}: {result['status']}")
+                    error_detail = result.get("error", result["status"])
+                    print(f"❌ {symbol}: {error_detail}")
                 
-                # Rate limiting
-                if i < len(symbols_to_process):
-                    time.sleep(API_DELAY_SECONDS)
+                # Show periodic performance updates
+                if i % 10 == 0 or i == len(symbols_to_process):
+                    self.rate_limiter.print_performance_summary()
             
             print(f"\n🎯 Incremental extraction completed:")
             print(f"  Symbols processed: {results['symbols_processed']}")
@@ -529,6 +544,11 @@ class BalanceSheetExtractor:
             print(f"  No changes: {results['no_changes']}")
             print(f"  Failed: {results['failed']}")
             print(f"  Total records: {results['total_records']}")
+            
+            # Final performance summary
+            print("\n" + "="*60)
+            self.rate_limiter.print_performance_summary()
+            print("="*60)
             
             return results
 

@@ -15,7 +15,8 @@ from dotenv import load_dotenv
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
-from utils.database_safety import DatabaseSafetyManager# -----------------------------------------------------------------------------
+from utils.database_safety import DatabaseSafetyManager
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType# -----------------------------------------------------------------------------
 # Example commands (PowerShell):
 # 
 # Incremental update (default):
@@ -54,6 +55,9 @@ class ListingStatusExtractor:
 
         self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
+        
+        # Initialize adaptive rate limiter for fundamentals processing  
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.FUNDAMENTALS, verbose=True)
 
     def extract_data(self):
         """Extract listing status data from Alpha Vantage API for both active and delisted stocks."""
@@ -65,6 +69,9 @@ class ListingStatusExtractor:
         for state in states:
             print(f"Extracting {state} stocks...")
             url = f"{self.base_url}?function={STOCK_API_FUNCTION}&state={state}&apikey={self.api_key}"
+
+            # Wait with adaptive rate limiting
+            self.rate_limiter.pre_api_call()
 
             try:
                 response = requests.get(url)
@@ -78,13 +85,20 @@ class ListingStatusExtractor:
                 
                 print(f"Successfully extracted {len(df)} {state} records")
                 all_data.append(df)
+                
+                # Notify rate limiter of successful API call
+                self.rate_limiter.post_api_call('success')
 
             except requests.exceptions.RequestException as e:
                 print(f"Error fetching {state} data from API: {e}")
+                # Notify rate limiter of failed API call
+                self.rate_limiter.post_api_call('error')
                 # Continue with other state if one fails
                 continue
             except pd.errors.EmptyDataError:
                 print(f"No {state} data received from API")
+                # Notify rate limiter (treat as successful API call but no data)
+                self.rate_limiter.post_api_call('success')
                 continue
 
         if not all_data:
@@ -520,6 +534,9 @@ class ListingStatusExtractor:
     def run_etl(self):
         """Run the complete ETL process."""
         print(f"Starting Listing Status ETL process ({self.mode.upper()} mode)...")
+
+        # Initialize adaptive rate limiting
+        self.rate_limiter.start_processing()
 
         try:
             # Extract
