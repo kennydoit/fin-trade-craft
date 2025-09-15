@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 # API configuration
 API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
@@ -68,6 +69,9 @@ class CommoditiesExtractor:
         self.db_manager = None
         self.watermark_manager = None
         self.base_url = "https://www.alphavantage.co/query"
+        
+        # Initialize adaptive rate limiter for time series processing
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.TIME_SERIES, verbose=True)
     
     def _get_db_manager(self):
         """Get database manager with context management."""
@@ -167,6 +171,10 @@ class CommoditiesExtractor:
         
         try:
             print(f"Fetching {display_name} data...")
+            
+            # Wait with adaptive rate limiting
+            self.rate_limiter.pre_api_call()
+            
             response = requests.get(self.base_url, params=params, timeout=30)
             response.raise_for_status()
             
@@ -175,24 +183,34 @@ class CommoditiesExtractor:
             # Check for API error messages
             if "Error Message" in data:
                 print(f"API Error for {function_name}: {data['Error Message']}")
+                # Notify rate limiter of error
+                self.rate_limiter.post_api_call('error')
                 return pd.DataFrame(), "error"
             
             if "Note" in data:
                 print(f"API Note for {function_name}: {data['Note']}")
+                # Notify rate limiter of rate limiting
+                self.rate_limiter.post_api_call('rate_limited')
                 return pd.DataFrame(), "rate_limited"
             
             if "Information" in data:
                 print(f"API Information for {function_name}: {data['Information']}")
+                # Notify rate limiter of error
+                self.rate_limiter.post_api_call('error')
                 return pd.DataFrame(), "error"
             
             # Check if we have data
             if "data" not in data:
                 print(f"No 'data' field found in response for {function_name}")
+                # Notify rate limiter (successful API call but no data)
+                self.rate_limiter.post_api_call('success')
                 return pd.DataFrame(), "empty"
             
             commodity_data = data["data"]
             if not commodity_data:
                 print(f"Empty data array for {function_name}")
+                # Notify rate limiter (successful API call but no data)
+                self.rate_limiter.post_api_call('success')
                 return pd.DataFrame(), "empty"
             
             # Extract metadata
@@ -216,13 +234,19 @@ class CommoditiesExtractor:
             df["date"] = pd.to_datetime(df["date"]).dt.date
             
             print(f"Successfully fetched {len(df)} records for {display_name}")
+            # Notify rate limiter of successful API call
+            self.rate_limiter.post_api_call('success')
             return df, "success"
             
         except requests.exceptions.RequestException as e:
             print(f"Request error for {function_name}: {str(e)}")
+            # Notify rate limiter of error
+            self.rate_limiter.post_api_call('error')
             return pd.DataFrame(), "error"
         except Exception as e:
             print(f"Unexpected error for {function_name}: {str(e)}")
+            # Notify rate limiter of error
+            self.rate_limiter.post_api_call('error')
             return pd.DataFrame(), "error"
     
     def _store_landing_record(self, db, function_name: str, df: pd.DataFrame, 
@@ -530,6 +554,9 @@ class CommoditiesExtractor:
         print(f"🚀 Starting incremental commodities extraction...")
         print(f"Configuration: functions={len(function_list)}, batch_size={batch_size}")
         
+        # Initialize adaptive rate limiting
+        self.rate_limiter.start_processing()
+        
         with self._get_db_manager() as db:
             # Ensure schema exists
             self._ensure_schema_exists(db)
@@ -576,15 +603,6 @@ class CommoditiesExtractor:
                 else:
                     results["failed"] += 1
                     print(f"❌ {display_name}: {result['status']}")
-                
-                # Rate limiting between requests
-                if i < len(function_list):
-                    time.sleep(API_DELAY_SECONDS)
-                
-                # Batch processing pause
-                if i % batch_size == 0 and i < len(function_list):
-                    print(f"Batch {i // batch_size} completed. Pausing for additional rate limiting...")
-                    time.sleep(0.8)
             
             print(f"\n🎯 Incremental extraction completed:")
             print(f"  Functions processed: {results['functions_processed']}")

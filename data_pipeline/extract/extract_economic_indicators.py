@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 # API configuration
 API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
@@ -92,6 +93,9 @@ class EconomicIndicatorsExtractor:
         self.content_hasher = ContentHasher()
         self.date_utils = DateUtils()
         self.run_id_generator = RunIdGenerator()
+        
+        # Initialize adaptive rate limiter for time series processing
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.TIME_SERIES, verbose=True)
 
     def _ensure_source_schema(self):
         """Create source schema tables if they don't exist."""
@@ -164,6 +168,10 @@ class EconomicIndicatorsExtractor:
 
         try:
             print(f"Extracting {display_name} data...")
+            
+            # Wait with adaptive rate limiting
+            self.rate_limiter.pre_api_call()
+            
             response = requests.get(self.base_url, params=params)
             response.raise_for_status()
 
@@ -172,24 +180,34 @@ class EconomicIndicatorsExtractor:
             # Check for API error messages
             if "Error Message" in data:
                 print(f"API Error for {function_key}: {data['Error Message']}")
+                # Notify rate limiter of error
+                self.rate_limiter.post_api_call('error')
                 return None, "error", data.get("Error Message", "Unknown API error"), data
 
             if "Note" in data:
                 print(f"API Note for {function_key}: {data['Note']}")
+                # Notify rate limiter of rate limiting
+                self.rate_limiter.post_api_call('rate_limited')
                 return None, "error", data.get("Note", "API rate limit or other note"), data
 
             if "Information" in data:
                 print(f"API Information for {function_key}: {data['Information']}")
+                # Notify rate limiter of error
+                self.rate_limiter.post_api_call('error')
                 return None, "error", data.get("Information", "API information message"), data
 
             # Check if we have data
             if "data" not in data:
                 print(f"No 'data' field found in response for {function_key}")
+                # Notify rate limiter (successful API call but no data)
+                self.rate_limiter.post_api_call('success')
                 return None, "empty", "No data field in API response", data
 
             indicator_data = data["data"]
             if not indicator_data:
                 print(f"Empty data array for {function_key}")
+                # Notify rate limiter (successful API call but no data)
+                self.rate_limiter.post_api_call('success')
                 return None, "empty", "Empty data array", data
 
             # Extract metadata
@@ -213,15 +231,21 @@ class EconomicIndicatorsExtractor:
             df["date"] = pd.to_datetime(df["date"]).dt.date
 
             print(f"Successfully extracted {len(df)} records for {display_name}")
+            # Notify rate limiter of successful API call
+            self.rate_limiter.post_api_call('success')
             return df, "success", f"Successfully extracted {len(df)} records", data
 
         except requests.exceptions.RequestException as e:
             error_msg = f"Request error for {function_key}: {str(e)}"
             print(error_msg)
+            # Notify rate limiter of error
+            self.rate_limiter.post_api_call('error')
             return None, "error", error_msg, {}
         except Exception as e:
             error_msg = f"Unexpected error for {function_key}: {str(e)}"
             print(error_msg)
+            # Notify rate limiter of error
+            self.rate_limiter.post_api_call('error')
             return None, "error", error_msg, {}
 
     def _prepare_records_for_insertion(self, df: pd.DataFrame, raw_response: dict, run_id: str) -> List[tuple]:
@@ -289,7 +313,7 @@ class EconomicIndicatorsExtractor:
             (indicator_name, function_name, maturity, date, interval, unit, value, name,
              api_response, api_response_status, run_id, content_hash)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (indicator_name, function_name, maturity, date, interval) 
+            ON CONFLICT (indicator_name, date, content_hash) 
             DO UPDATE SET
                 unit = EXCLUDED.unit,
                 value = EXCLUDED.value,
@@ -297,7 +321,6 @@ class EconomicIndicatorsExtractor:
                 api_response = EXCLUDED.api_response,
                 api_response_status = EXCLUDED.api_response_status,
                 run_id = EXCLUDED.run_id,
-                content_hash = EXCLUDED.content_hash,
                 updated_at = NOW()
             WHERE source.economic_indicators.content_hash != EXCLUDED.content_hash
         """
@@ -347,7 +370,7 @@ class EconomicIndicatorsExtractor:
                 (indicator_name, function_name, maturity, date, interval, unit, value, name,
                  api_response, api_response_status, run_id, content_hash)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (indicator_name, function_name, maturity, date, interval) 
+                ON CONFLICT (indicator_name, date, content_hash) 
                 DO NOTHING
             """
             
@@ -461,6 +484,9 @@ class EconomicIndicatorsExtractor:
         print(f"Starting economic indicators extraction for {len(indicator_list)} indicators...")
         print(f"Batch size: {batch_size}")
         print("-" * 60)
+        
+        # Initialize adaptive rate limiting
+        self.rate_limiter.start_processing()
 
         # Initialize tracking
         total_inserted = 0
@@ -485,16 +511,6 @@ class EconomicIndicatorsExtractor:
                 print(f"✗ Error processing {display_name}: {str(e)}")
                 status_summary["error"] += 1
                 continue
-
-            # Rate limiting between requests
-            if i < len(indicator_list) - 1:
-                print(f"Rate limiting: sleeping for {API_DELAY_SECONDS} seconds...")
-                time.sleep(API_DELAY_SECONDS)
-
-            # Batch processing pause
-            if (i + 1) % batch_size == 0 and i < len(indicator_list) - 1:
-                print(f"Batch {(i + 1) // batch_size} completed. Additional pause...")
-                time.sleep(1.0)
 
             print("-" * 40)
 

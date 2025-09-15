@@ -20,10 +20,10 @@ from dotenv import load_dotenv
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
 from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 # API configuration
 STOCK_API_FUNCTION = "INCOME_STATEMENT"
-API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
 
 # Schema-driven field mapping configuration
 INCOME_STATEMENT_FIELDS = {
@@ -64,7 +64,7 @@ INCOME_STATEMENT_FIELDS = {
 
 
 class IncomeStatementExtractor:
-    """Income statement extractor with incremental processing."""
+    """Income statement extractor with adaptive rate limiting and incremental processing."""
     
     def __init__(self):
         """Initialize the extractor."""
@@ -77,6 +77,9 @@ class IncomeStatementExtractor:
         self.schema_name = "source"
         self.db_manager = None
         self.watermark_manager = None
+        
+        # Initialize adaptive rate limiter for fundamentals (light processing)
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.FUNDAMENTALS, verbose=True)
     
     def _get_db_manager(self):
         """Get database manager with context management."""
@@ -121,6 +124,9 @@ class IncomeStatementExtractor:
             "symbol": symbol,
             "apikey": self.api_key
         }
+        
+        # Adaptive rate limiting - smart delay based on elapsed time and processing overhead
+        self.rate_limiter.pre_api_call()
         
         try:
             print(f"Fetching data from: {url}?function={STOCK_API_FUNCTION}&symbol={symbol}&apikey={self.api_key}")
@@ -488,9 +494,9 @@ class IncomeStatementExtractor:
                     results["failed"] += 1
                     print(f"❌ {symbol}: {result['status']}")
                 
-                # Rate limiting
-                if i < len(symbols_to_process):
-                    time.sleep(API_DELAY_SECONDS)
+                # Show periodic performance updates
+                if i % 10 == 0 or i == len(symbols_to_process):
+                    self.rate_limiter.print_performance_summary()
             
             print(f"\n🎯 Incremental extraction completed:")
             print(f"  Symbols processed: {results['symbols_processed']}")

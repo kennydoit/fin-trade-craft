@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
 
 API_FUNCTION = "OVERVIEW"
 
@@ -33,8 +34,8 @@ class OverviewExtractor:
         self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
 
-        # Rate limiting: 75 requests per minute for Alpha Vantage
-        self.rate_limit_delay = 1  # seconds between requests
+        # Initialize adaptive rate limiter for fundamentals processing
+        self.rate_limiter = AdaptiveRateLimiter(ExtractorType.FUNDAMENTALS, verbose=True)
 
     def load_valid_symbols(self, exchange_filter=None, limit=None, try_failed: str = "Y"):
         """Load valid stock symbols from the database with their symbol_ids.
@@ -102,6 +103,9 @@ class OverviewExtractor:
         url = f"{self.base_url}?function={API_FUNCTION}&symbol={symbol}&apikey={self.api_key}"
         print(f"Fetching data from: {url}")
 
+        # Wait with adaptive rate limiting
+        self.rate_limiter.pre_api_call()
+
         try:
             response = requests.get(url)
             response.raise_for_status()
@@ -112,16 +116,24 @@ class OverviewExtractor:
             # Check if we got valid data or an empty response
             if not data or data == {} or "Symbol" not in data:
                 print(f"Empty or invalid response for {symbol}: {data}")
+                # Notify rate limiter of failed API call
+                self.rate_limiter.post_api_call('error')
                 return None, "fail"
 
             print(f"Successfully fetched data for {symbol}")
+            # Notify rate limiter of successful API call
+            self.rate_limiter.post_api_call('success')
             return data, "pass"
 
         except requests.exceptions.RequestException as e:
             print(f"Error fetching data for {symbol}: {e}")
+            # Notify rate limiter of failed API call
+            self.rate_limiter.post_api_call('error')
             return None, "fail"
         except Exception as e:
             print(f"Unexpected error for {symbol}: {e}")
+            # Notify rate limiter of failed API call
+            self.rate_limiter.post_api_call('error')
             return None, "fail"
 
     def transform_overview_data(self, symbol, symbol_id, data, status):
@@ -288,6 +300,9 @@ class OverviewExtractor:
         """Run the complete ETL process for overview data."""
         print("Starting Overview ETL process...")
 
+        # Initialize adaptive rate limiting
+        self.rate_limiter.start_processing()
+
         try:
             # Use a fresh database manager for this ETL run
             db_manager = PostgresDatabaseManager()
@@ -317,10 +332,6 @@ class OverviewExtractor:
 
                     print(f"Processed {symbol} (ID: {symbol_id}) with status: {status}")
 
-                    # Rate limiting - wait between requests
-                    if i < len(symbols) - 1:  # Don't wait after the last request
-                        time.sleep(self.rate_limit_delay)
-
                 # Load all records using the shared connection
                 self.load_overview_data_with_db(db, records)
 
@@ -341,6 +352,9 @@ class OverviewExtractor:
     def run_etl_incremental(self, exchange_filter=None, limit=None, try_failed: str = "Y"):
         """Run ETL only for symbols not yet processed."""
         print("Starting Incremental Overview ETL process...")
+
+        # Initialize adaptive rate limiting
+        self.rate_limiter.start_processing()
 
         try:
             # Use a fresh database manager for this ETL run
@@ -372,10 +386,6 @@ class OverviewExtractor:
                     print(
                         f"Processed {symbol} (ID: {symbol_id}) with status: {status} [{i+1}/{len(symbols)}]"
                     )
-
-                    # Rate limiting - wait between requests
-                    if i < len(symbols) - 1:
-                        time.sleep(self.rate_limit_delay)
 
                 # Load all records using the shared connection
                 self.load_overview_data_with_db(db, records)
