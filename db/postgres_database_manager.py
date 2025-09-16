@@ -49,9 +49,6 @@ class PostgresDatabaseManager:
             )
             # Set autocommit to False for transaction control
             self.connection.autocommit = False
-            print(
-                f"Connected to PostgreSQL database '{self.config['database']}' at {self.config['host']}:{self.config['port']}"
-            )
         except psycopg2.Error as e:
             raise Exception(f"Failed to connect to PostgreSQL: {e}")
 
@@ -59,7 +56,6 @@ class PostgresDatabaseManager:
         """Close the database connection."""
         if self.connection:
             self.connection.close()
-            print("PostgreSQL database connection closed.")
 
     def execute_query(self, query, params=None):
         """Execute a query against the database."""
@@ -74,7 +70,6 @@ class PostgresDatabaseManager:
                 cursor.execute(query)
 
             self.connection.commit()
-            print(f"Executed query: {query[:50]}...")
 
             # For SELECT queries, return results
             if query.strip().upper().startswith("SELECT"):
@@ -96,9 +91,6 @@ class PostgresDatabaseManager:
         try:
             cursor.executemany(query, params_list)
             self.connection.commit()
-            print(
-                f"Executed batch query: {query[:50]}... with {len(params_list)} records"
-            )
             return cursor.rowcount
 
         except psycopg2.Error as e:
@@ -145,7 +137,7 @@ class PostgresDatabaseManager:
         if not schema_path.exists():
             raise FileNotFoundError(f"Schema file not found: {schema_path}")
 
-        with open(schema_path) as file:
+        with schema_path.open() as file:
             schema_sql = file.read()
 
         cursor = self.connection.cursor()
@@ -153,7 +145,6 @@ class PostgresDatabaseManager:
             # Execute the entire schema as one transaction
             cursor.execute(schema_sql)
             self.connection.commit()
-            print(f"Database schema initialized from {schema_path}")
 
         except psycopg2.Error as e:
             self.connection.rollback()
@@ -171,84 +162,10 @@ class PostgresDatabaseManager:
             # Execute the entire script as one transaction
             cursor.execute(sql_script)
             self.connection.commit()
-            print(f"SQL script executed successfully")
 
         except psycopg2.Error as e:
             self.connection.rollback()
             raise Exception(f"Script execution failed: {e}")
-        finally:
-            cursor.close()
-
-    def table_exists(self, table_name):
-        """Check if a table exists in the database.
-        
-        Args:
-            table_name: Table name (e.g., 'table_name') or schema-qualified (e.g., 'schema.table_name')
-        """
-        if not self.connection:
-            raise Exception("Database connection is not established.")
-
-        cursor = self.connection.cursor()
-        try:
-            # Check if table name includes schema
-            if '.' in table_name:
-                schema_name, table_name_only = table_name.split('.', 1)
-                cursor.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_schema = %s 
-                        AND table_name = %s
-                    )
-                """,
-                    (schema_name, table_name_only),
-                )
-            else:
-                # Default to public schema for unqualified table names
-                cursor.execute(
-                    """
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables 
-                        WHERE table_schema = 'public' 
-                        AND table_name = %s
-                    )
-                """,
-                    (table_name,),
-                )
-
-            return cursor.fetchone()[0]
-
-        except psycopg2.Error as e:
-            raise Exception(f"Table existence check failed: {e}")
-        finally:
-            cursor.close()
-
-    def get_table_info(self, table_name):
-        """Get column information for a table."""
-        if not self.connection:
-            raise Exception("Database connection is not established.")
-
-        cursor = self.connection.cursor()
-        try:
-            cursor.execute(
-                """
-                SELECT 
-                    column_name, 
-                    data_type, 
-                    is_nullable, 
-                    column_default
-                FROM information_schema.columns 
-                WHERE table_schema = 'public' 
-                AND table_name = %s
-                ORDER BY ordinal_position
-            """,
-                (table_name,),
-            )
-
-            return cursor.fetchall()
-
-        except psycopg2.Error as e:
-            raise Exception(f"Table info retrieval failed: {e}")
         finally:
             cursor.close()
 
@@ -271,8 +188,8 @@ class PostgresDatabaseManager:
             # If not found, insert new symbol
             cursor.execute(
                 """
-                INSERT INTO listing_status (symbol, status, created_at, updated_at) 
-                VALUES (%s, 'active', NOW(), NOW()) 
+                INSERT INTO listing_status (symbol, status, created_at, updated_at)
+                VALUES (%s, 'active', NOW(), NOW())
                 RETURNING symbol_id
             """,
                 (symbol,),
@@ -281,7 +198,6 @@ class PostgresDatabaseManager:
             symbol_id = cursor.fetchone()[0]
             self.connection.commit()
 
-            print(f"Created new symbol_id {symbol_id} for symbol {symbol}")
             return symbol_id
 
         except psycopg2.Error as e:
@@ -346,12 +262,12 @@ class PostgresDatabaseManager:
         """Check if a table exists in the specified schema."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             query = """
                 SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables 
+                    SELECT 1 FROM information_schema.tables
                     WHERE table_schema = %s AND table_name = %s
                 );
             """
@@ -366,7 +282,7 @@ class PostgresDatabaseManager:
         """Get information about a table including row count and columns."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             # Get column information
@@ -378,12 +294,12 @@ class PostgresDatabaseManager:
             """
             cursor.execute(columns_query, (schema_name, table_name))
             columns = cursor.fetchall()
-            
+
             # Get row count
             count_query = f"SELECT COUNT(*) FROM {schema_name}.{table_name};"
             cursor.execute(count_query)
             row_count = cursor.fetchone()[0]
-            
+
             return {
                 'table_name': table_name,
                 'schema_name': schema_name,
@@ -399,12 +315,12 @@ class PostgresDatabaseManager:
         """List all schemas in the database."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             query = """
-                SELECT schema_name 
-                FROM information_schema.schemata 
+                SELECT schema_name
+                FROM information_schema.schemata
                 WHERE schema_name NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
                 ORDER BY schema_name;
             """
@@ -419,12 +335,12 @@ class PostgresDatabaseManager:
         """List all tables in the specified schema."""
         if not self.connection:
             raise Exception("Database connection is not established.")
-        
+
         cursor = self.connection.cursor()
         try:
             query = """
-                SELECT table_name 
-                FROM information_schema.tables 
+                SELECT table_name
+                FROM information_schema.tables
                 WHERE table_schema = %s AND table_type = 'BASE TABLE'
                 ORDER BY table_name;
             """

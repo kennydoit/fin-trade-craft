@@ -3,13 +3,14 @@ Enhanced symbol pre-screening utilities for fundamental data extractors.
 Filters out symbols that are unlikely to have fundamental data.
 """
 
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
 import re
+from datetime import datetime, timedelta
+from typing import Any
+
 
 class SymbolScreener:
     """Pre-screen symbols to avoid unnecessary API calls for symbols without fundamentals."""
-    
+
     # Patterns for symbols that typically don't have fundamental data
     WARRANT_PATTERNS = [
         r'.*WS.*',      # Warrants containing WS
@@ -17,25 +18,25 @@ class SymbolScreener:
         r'.*-WS$',      # Warrants ending with -WS
         r'.*W$'         # Some warrants end with W (but be careful with regular stocks)
     ]
-    
+
     RIGHTS_PATTERNS = [
         r'^.+R$',       # Rights typically end in R (but exclude common stocks)
         r'.*\.R$',      # Rights with dot notation
         r'.*-R$',       # Rights with dash notation
     ]
-    
+
     PREFERRED_PATTERNS = [
-        r'.*\.P.*',     # Preferred with dot notation  
+        r'.*\.P.*',     # Preferred with dot notation
         r'.*-P.*',      # Preferred with dash notation
         r'.*PR.*',      # Preferred containing PR
     ]
-    
+
     UNIT_PATTERNS = [
         r'^.+U$',       # Units typically end in U (SPACs)
         r'.*\.U$',      # Units with dot notation
         r'.*-U$',       # Units with dash notation
     ]
-    
+
     # Common exceptions that should NOT be filtered (legitimate stocks)
     STOCK_EXCEPTIONS = {
         # Common stock patterns that might match warrant/rights/preferred patterns
@@ -45,100 +46,92 @@ class SymbolScreener:
         # Well-known legitimate stocks with dots/dashes (class shares)
         'BRK.A', 'BRK.B', 'GOOGL', 'GOOG'
     }
-    
+
     @classmethod
     def is_likely_warrant(cls, symbol: str) -> bool:
         """Check if symbol is likely a warrant."""
         if symbol in cls.STOCK_EXCEPTIONS:
             return False
-            
+
         for pattern in cls.WARRANT_PATTERNS:
             if re.match(pattern, symbol, re.IGNORECASE):
                 # Additional check: if it's just a single letter + W, might be legitimate
-                if len(symbol) == 2 and symbol.endswith('W'):
-                    return False
-                return True
+                return not (len(symbol) == 2 and symbol.endswith('W'))
         return False
-    
+
     @classmethod
     def is_likely_rights(cls, symbol: str) -> bool:
         """Check if symbol is likely rights."""
         if symbol in cls.STOCK_EXCEPTIONS:
             return False
-            
+
         for pattern in cls.RIGHTS_PATTERNS:
             if re.match(pattern, symbol, re.IGNORECASE):
                 # Exclude common legitimate stocks ending in R
-                if symbol.upper() in ['CAR', 'AAR', 'BAR', 'UBER', 'PIER', 'BKIR', 'CHIR', 'HAIR']:
-                    return False
-                return True
+                return symbol.upper() not in ['CAR', 'AAR', 'BAR', 'UBER', 'PIER', 'BKIR', 'CHIR', 'HAIR']
         return False
-    
-    @classmethod 
+
+    @classmethod
     def is_likely_preferred(cls, symbol: str) -> bool:
         """Check if symbol is likely preferred stock."""
         if symbol in cls.STOCK_EXCEPTIONS:
             return False
-            
+
         for pattern in cls.PREFERRED_PATTERNS:
             if re.match(pattern, symbol, re.IGNORECASE):
                 # Exclude common legitimate stocks with P
-                if any(common in symbol.upper() for common in ['APP', 'EPP', 'IPP', 'OPP', 'UPP']):
-                    return False
-                return True
+                return not any(common in symbol.upper() for common in ['APP', 'EPP', 'IPP', 'OPP', 'UPP'])
         return False
-    
+
     @classmethod
     def is_likely_unit(cls, symbol: str) -> bool:
-        """Check if symbol is likely a unit (SPAC).""" 
+        """Check if symbol is likely a unit (SPAC)."""
         if symbol in cls.STOCK_EXCEPTIONS:
             return False
-            
+
         for pattern in cls.UNIT_PATTERNS:
             if re.match(pattern, symbol, re.IGNORECASE):
                 # Exclude common legitimate stocks ending in U
-                if symbol.upper() in ['AU', 'BU', 'CU', 'FU', 'MU', 'NU']:
-                    return False
-                return True
+                return symbol.upper() not in ['AU', 'BU', 'CU', 'FU', 'MU', 'NU']
         return False
-    
+
     @classmethod
     def has_complex_symbol(cls, symbol: str) -> bool:
         """Check if symbol has complex notation (dots, dashes) that suggests derivative instruments."""
         if symbol in cls.STOCK_EXCEPTIONS:
             return False
         return '.' in symbol or '-' in symbol
-    
+
     @classmethod
     def is_too_long(cls, symbol: str, max_length: int = 5) -> bool:
         """Check if symbol is unusually long (often indicates derivative/complex instrument)."""
         return len(symbol) > max_length
-    
+
     @classmethod
-    def has_recent_ipo(cls, ipo_date: Optional[datetime], days_threshold: int = 90) -> bool:
+    def has_recent_ipo(cls, ipo_date: datetime | None, days_threshold: int = 90) -> bool:
         """Check if IPO is very recent (may not have enough fundamentals yet)."""
         if not ipo_date:
             return False
-        
+
         cutoff_date = datetime.now() - timedelta(days=days_threshold)
         return ipo_date > cutoff_date
-    
+
     @classmethod
-    def is_fundamentals_eligible(cls, symbol_data: Dict[str, Any], 
+    def is_fundamentals_eligible(cls, symbol_data: dict[str, Any],
                                enable_ipo_filter: bool = False,
                                ipo_days_threshold: int = 90,
                                enable_failure_blacklist: bool = True,
-                               max_consecutive_failures: int = 3) -> Dict[str, Any]:
+                               max_consecutive_failures: int = 3) -> dict[str, Any]:
         """
         Comprehensive screening to determine if symbol is eligible for fundamentals extraction.
-        
+
         Args:
             symbol_data: Dictionary containing symbol metadata
             enable_ipo_filter: Filter out very recent IPOs
             ipo_days_threshold: Days after IPO before attempting fundamentals
             enable_failure_blacklist: Filter out symbols with too many failures
             max_consecutive_failures: Max failures before blacklisting
-            
+
         Returns:
             Dict with eligibility decision and reasons
         """
@@ -148,54 +141,54 @@ class SymbolScreener:
         delisting_date = symbol_data.get('delisting_date')
         ipo_date = symbol_data.get('ipo_date')
         consecutive_failures = symbol_data.get('consecutive_failures', 0)
-        exchange = symbol_data.get('exchange', '')
-        
+        symbol_data.get('exchange', '')
+
         exclusion_reasons = []
-        
+
         # 1. Basic asset type and status checks
         if asset_type != 'Stock':
             exclusion_reasons.append(f"Non-stock asset type: {asset_type}")
-        
+
         if status != 'active':
             exclusion_reasons.append(f"Non-active status: {status}")
-        
+
         if delisting_date:
             exclusion_reasons.append(f"Delisted on: {delisting_date}")
-        
+
         # 2. Derivative instrument checks
         if cls.is_likely_warrant(symbol):
             exclusion_reasons.append("Likely warrant")
-        
+
         if cls.is_likely_rights(symbol):
             exclusion_reasons.append("Likely rights")
-        
+
         if cls.is_likely_preferred(symbol):
             exclusion_reasons.append("Likely preferred stock")
-        
+
         if cls.is_likely_unit(symbol):
             exclusion_reasons.append("Likely unit/SPAC")
-        
+
         if cls.has_complex_symbol(symbol):
             exclusion_reasons.append("Complex symbol notation (contains dots/dashes)")
-        
+
         if cls.is_too_long(symbol):
             exclusion_reasons.append(f"Unusually long symbol ({len(symbol)} chars)")
-        
+
         # 3. Recent IPO filter (optional)
         if enable_ipo_filter and ipo_date and cls.has_recent_ipo(ipo_date, ipo_days_threshold):
             exclusion_reasons.append(f"Recent IPO ({ipo_date}, less than {ipo_days_threshold} days)")
-        
+
         # 4. Failure blacklist (optional but recommended)
         if enable_failure_blacklist and consecutive_failures >= max_consecutive_failures:
             exclusion_reasons.append(f"Too many consecutive failures ({consecutive_failures})")
-        
+
         # 5. Single character symbols (often problematic)
         if len(symbol) == 1:
             exclusion_reasons.append("Single character symbol")
-        
+
         # Determine eligibility
         is_eligible = len(exclusion_reasons) == 0
-        
+
         return {
             'symbol': symbol,
             'is_eligible': is_eligible,
@@ -215,27 +208,27 @@ class SymbolScreener:
                 'failure_count': consecutive_failures
             }
         }
-    
+
     @classmethod
-    def filter_symbols_for_fundamentals(cls, symbols: List[Dict[str, Any]], 
-                                      **screening_options) -> Dict[str, Any]:
+    def filter_symbols_for_fundamentals(cls, symbols: list[dict[str, Any]],
+                                      **screening_options) -> dict[str, Any]:
         """
         Filter a list of symbols for fundamentals extraction.
-        
+
         Args:
             symbols: List of symbol dictionaries
             **screening_options: Options for screening (passed to is_fundamentals_eligible)
-            
+
         Returns:
             Dictionary with eligible symbols, excluded symbols, and statistics
         """
         eligible_symbols = []
         excluded_symbols = []
         exclusion_stats = {}
-        
+
         for symbol_data in symbols:
             result = cls.is_fundamentals_eligible(symbol_data, **screening_options)
-            
+
             if result['is_eligible']:
                 eligible_symbols.append(symbol_data)
             else:
@@ -243,11 +236,11 @@ class SymbolScreener:
                     **symbol_data,
                     'exclusion_reasons': result['exclusion_reasons']
                 })
-                
+
                 # Track exclusion statistics
                 for reason in result['exclusion_reasons']:
                     exclusion_stats[reason] = exclusion_stats.get(reason, 0) + 1
-        
+
         return {
             'eligible_symbols': eligible_symbols,
             'excluded_symbols': excluded_symbols,
@@ -271,27 +264,19 @@ def test_symbol_screener():
         {'symbol': 'BRK.A', 'asset_type': 'Stock', 'status': 'Active', 'delisting_date': None, 'ipo_date': None, 'consecutive_failures': 0},
         {'symbol': 'TSLAW', 'asset_type': 'Stock', 'status': 'Active', 'delisting_date': None, 'ipo_date': None, 'consecutive_failures': 0},
     ]
-    
+
     screener = SymbolScreener()
     results = screener.filter_symbols_for_fundamentals(test_symbols)
-    
-    print("🧪 Symbol Screener Test Results:")
-    print(f"Total symbols: {results['statistics']['total_input']}")
-    print(f"Eligible: {results['statistics']['eligible_count']}")
-    print(f"Excluded: {results['statistics']['excluded_count']}")
-    print(f"Eligibility rate: {results['statistics']['eligibility_rate']:.1f}%")
-    
-    print("\n✅ Eligible symbols:")
-    for symbol in results['eligible_symbols']:
-        print(f"  {symbol['symbol']}")
-    
-    print("\n❌ Excluded symbols:")
-    for symbol in results['excluded_symbols']:
-        print(f"  {symbol['symbol']}: {', '.join(symbol['exclusion_reasons'])}")
-    
-    print("\n📊 Exclusion reasons:")
-    for reason, count in results['statistics']['exclusion_reasons'].items():
-        print(f"  {reason}: {count}")
+
+
+    for _symbol in results['eligible_symbols']:
+        pass
+
+    for _symbol in results['excluded_symbols']:
+        pass
+
+    for _reason, _count in results['statistics']['exclusion_reasons'].items():
+        pass
 
 
 if __name__ == "__main__":

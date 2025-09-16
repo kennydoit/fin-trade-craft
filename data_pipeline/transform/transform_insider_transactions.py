@@ -24,14 +24,15 @@ Output: CSV report with columns:
     executive_title, tier_1_count, tier_2_count, tier_3_count, owner_count
 """
 
-import re
+import argparse
 import csv
 import json
-import pandas as pd
-import argparse
-from typing import List, Dict, Any, Tuple, Optional
-from pathlib import Path
+import re
 import sys
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
 
 # Add project root to Python path
 project_root = Path(__file__).parent.parent.parent
@@ -91,11 +92,11 @@ ROLE_LABELS = [
 
 SEP_PATTERN = re.compile(r"\s*(,|/|&| and )\s*", flags=re.IGNORECASE)
 
-def _regex_any(patterns: List[str], text: str) -> bool:
+def _regex_any(patterns: list[str], text: str) -> bool:
     return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
 
-def _find_roles(text: str) -> List[str]:
-    roles: List[str] = []
+def _find_roles(text: str) -> list[str]:
+    roles: list[str] = []
     for label, patterns in ROLE_LABELS:
         if _regex_any(patterns, text):
             roles.append(label)
@@ -110,33 +111,39 @@ def _find_roles(text: str) -> List[str]:
 
 def _tier_from_text(text: str) -> int:
     tier = 0
-    if _regex_any(TIER3_PATTERNS, text): tier = max(tier, 3)
-    if _regex_any(TIER2_PATTERNS, text): tier = max(tier, 2)
-    if _regex_any(TIER1_PATTERNS, text): tier = max(tier, 1)
+    if _regex_any(TIER3_PATTERNS, text):
+        tier = max(tier, 3)
+    if _regex_any(TIER2_PATTERNS, text):
+        tier = max(tier, 2)
+    if _regex_any(TIER1_PATTERNS, text):
+        tier = max(tier, 1)
     return tier
 
 def _owner_flag(text: str) -> int:
     return 1 if _regex_any(OWNER_PATTERNS, text) else 0
 
-def _flags(text: str, roles: List[str], owner: int) -> List[str]:
+def _flags(text: str, roles: list[str], owner: int) -> list[str]:
     flags = []
-    if SEP_PATTERN.search(text): flags.append("multiple_roles")
-    if re.search(r"\d+%|\bpercent\b", text, flags=re.IGNORECASE): flags.append("contains_percent")
-    if owner == 1: flags.append("owner_detected")
-    if not roles: flags.append("ambiguous")
+    if SEP_PATTERN.search(text):
+        flags.append("multiple_roles")
+    if re.search(r"\d+%|\bpercent\b", text, flags=re.IGNORECASE):
+        flags.append("contains_percent")
+    if owner == 1:
+        flags.append("owner_detected")
+    if not roles:
+        flags.append("ambiguous")
     return sorted(set(flags))
 
-def _clean_title(raw: Optional[str]) -> str:
+def _clean_title(raw: str | None) -> str:
     if raw is None:
         return ""
     t = raw.strip()
     # Fix repeated spaces, normalize commas/ands etc. (light-touch; keep original for output)
-    t = re.sub(r"\s+", " ", t)
-    return t
+    return re.sub(r"\s+", " ", t)
 
 # ------------------------- Core Normalization -------------------------
 
-def normalize_title(raw_title: Optional[str]) -> Dict[str, Any]:
+def normalize_title(raw_title: str | None) -> dict[str, Any]:
     """
     Returns:
       {
@@ -167,7 +174,7 @@ def normalize_title(raw_title: Optional[str]) -> Dict[str, Any]:
 
 # ------------------------- Database I/O -------------------------
 
-def read_titles_from_database() -> List[Dict[str, Any]]:
+def read_titles_from_database() -> list[dict[str, Any]]:
     """
     Reads executive_title data from the insider_transactions table.
     Creates an aggregate with title and count.
@@ -175,33 +182,33 @@ def read_titles_from_database() -> List[Dict[str, Any]]:
     """
     db = PostgresDatabaseManager()
     db.connect()
-    
+
     try:
         query = """
             SELECT executive_title, COUNT(*) as count
             FROM extracted.insider_transactions
-            WHERE executive_title IS NOT NULL 
+            WHERE executive_title IS NOT NULL
                 AND executive_title != ''
             GROUP BY executive_title
             ORDER BY count DESC
         """
-        
+
         result = db.fetch_query(query)
         rows = []
         for row in result:
             rows.append({"title": row[0], "count": row[1]})
-        
+
         return rows
     finally:
         db.close()
 
-def read_titles_csv(path: str, title_col: str, count_col: Optional[str]) -> List[Dict[str, Any]]:
+def read_titles_csv(path: str, title_col: str, count_col: str | None) -> list[dict[str, Any]]:
     """
     Reads a CSV with at least a title column. Count column is optional.
     Returns list of dicts: [{"title": "...", "count": <int or None>}]
     """
     rows = []
-    with open(path, "r", newline="", encoding="utf-8-sig") as f:
+    with Path(path).open(newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         # Try to auto-detect if not provided
         if title_col not in reader.fieldnames:
@@ -217,12 +224,12 @@ def read_titles_csv(path: str, title_col: str, count_col: Optional[str]) -> List
             if count_col:
                 try:
                     cnt = int(r.get(count_col, "") or 0)
-                except:
+                except (ValueError, TypeError):
                     cnt = None
             rows.append({"title": title, "count": cnt})
     return rows
 
-def write_mapping_csv(path: str, mapped: List[Dict[str, Any]]) -> None:
+def write_mapping_csv(path: str, mapped: list[dict[str, Any]]) -> None:
     fields = [
         "executive_title_raw",
         "executive_title_clean",
@@ -232,7 +239,7 @@ def write_mapping_csv(path: str, mapped: List[Dict[str, Any]]) -> None:
         "flags_json",
         "count"
     ]
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    with Path(path).open("w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for m in mapped:
@@ -259,7 +266,6 @@ def map_titles_dataframe(df, title_col: str = "executive_title"):
         - is_owner_10pct (int)
         - title_flags (list)
     """
-    import pandas as pd
     def _apply(title):
         out = normalize_title(title)
         return pd.Series({
@@ -279,18 +285,18 @@ def generate_tier_report(output_path: str) -> None:
     """
     # Read data from database
     titles_data = read_titles_from_database()
-    
+
     report_data = []
-    
+
     for title_info in titles_data:
         title = title_info["title"]
         count = title_info["count"]
-        
+
         # Normalize the title to get tier and owner info
         normalized = normalize_title(title)
         tier = normalized["seniority_tier"]
         is_owner = normalized["is_owner_10pct"]
-        
+
         # Create report row
         row = {
             "executive_title": title,
@@ -300,27 +306,21 @@ def generate_tier_report(output_path: str) -> None:
             "owner_count": count if is_owner == 1 else 0
         }
         report_data.append(row)
-    
+
     # Write CSV report
-    with open(output_path, 'w', newline='', encoding='utf-8') as f:
+    with Path(output_path).open('w', newline='', encoding='utf-8') as f:
         fieldnames = ['executive_title', 'tier_1_count', 'tier_2_count', 'tier_3_count', 'owner_count']
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(report_data)
-    
-    print(f"Generated tier report with {len(report_data)} executive titles → {output_path}")
-    
+
+
     # Print summary statistics
-    total_tier_1 = sum(row['tier_1_count'] for row in report_data)
-    total_tier_2 = sum(row['tier_2_count'] for row in report_data)
-    total_tier_3 = sum(row['tier_3_count'] for row in report_data)
-    total_owners = sum(row['owner_count'] for row in report_data)
-    
-    print("\nSummary:")
-    print(f"  Tier 1 (Directors/VPs): {total_tier_1} transactions")
-    print(f"  Tier 2 (SVPs/EVPs/COOs/CFOs): {total_tier_2} transactions") 
-    print(f"  Tier 3 (CEOs/Presidents/Chairs): {total_tier_3} transactions")
-    print(f"  10% Owners: {total_owners} transactions")
+    sum(row['tier_1_count'] for row in report_data)
+    sum(row['tier_2_count'] for row in report_data)
+    sum(row['tier_3_count'] for row in report_data)
+    sum(row['owner_count'] for row in report_data)
+
 
 # ------------------------- CLI -------------------------
 
