@@ -452,7 +452,9 @@ class InsiderTransactionsExtractor:
     def run_incremental_extraction(self, limit: Optional[int] = None, 
                                  staleness_hours: int = 24, 
                                  quarterly_gap_detection: bool = False,  # Not applicable for insider transactions
-                                 enable_pre_screening: bool = True) -> Dict[str, Any]:
+                                 enable_pre_screening: bool = True,
+                                 use_dcs: bool = False,
+                                 min_dcs: float = 0.0) -> Dict[str, Any]:
         """
         Run incremental extraction for symbols that need processing.
         
@@ -461,12 +463,14 @@ class InsiderTransactionsExtractor:
             staleness_hours: Hours before data is considered stale
             quarterly_gap_detection: Not used for insider transactions (always False)
             enable_pre_screening: Enable symbol pre-screening to avoid likely failures
+            use_dcs: Enable Data Coverage Score prioritization
+            min_dcs: Minimum DCS score for symbol selection
             
         Returns:
             Processing summary
         """
         print(f"🚀 Starting incremental insider transactions extraction with adaptive rate limiting...")
-        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}, pre_screening={enable_pre_screening}")
+        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}, pre_screening={enable_pre_screening}, use_dcs={use_dcs}, min_dcs={min_dcs}")
         
         with self._get_db_manager() as db:
             # Ensure schema exists
@@ -474,14 +478,37 @@ class InsiderTransactionsExtractor:
             
             watermark_mgr = self._initialize_watermark_manager(db)
             
-            # Get symbols needing processing (no quarterly gap detection for insider transactions)
-            symbols_to_process = watermark_mgr.get_symbols_needing_processing(
-                self.table_name, 
-                staleness_hours=staleness_hours, 
-                limit=limit,
-                quarterly_gap_detection=False,  # Insider transactions don't use quarterly gaps
-                enable_pre_screening=enable_pre_screening
-            )
+            # Get symbols needing processing with DCS prioritization if requested
+            if use_dcs:
+                print(f"🎯 Using Data Coverage Score prioritization with min_dcs={min_dcs}")
+                try:
+                    symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_dcs(
+                        self.table_name, 
+                        staleness_hours=staleness_hours, 
+                        limit=limit,
+                        quarterly_gap_detection=False,  # Insider transactions don't use quarterly gaps
+                        enable_pre_screening=enable_pre_screening,
+                        min_dcs_threshold=min_dcs
+                    )
+                    print(f"✅ DCS prioritization successful: {len(symbols_to_process)} symbols selected")
+                except Exception as e:
+                    print(f"⚠️ DCS prioritization failed ({e}), falling back to standard method")
+                    symbols_to_process = watermark_mgr.get_symbols_needing_processing(
+                        self.table_name, 
+                        staleness_hours=staleness_hours, 
+                        limit=limit,
+                        quarterly_gap_detection=False,  # Insider transactions don't use quarterly gaps
+                        enable_pre_screening=enable_pre_screening
+                    )
+            else:
+                # Standard processing without DCS
+                symbols_to_process = watermark_mgr.get_symbols_needing_processing(
+                    self.table_name, 
+                    staleness_hours=staleness_hours, 
+                    limit=limit,
+                    quarterly_gap_detection=False,  # Insider transactions don't use quarterly gaps
+                    enable_pre_screening=enable_pre_screening
+                )
             
             print(f"Found {len(symbols_to_process)} symbols needing processing")
             
@@ -555,6 +582,10 @@ def main():
                        help="Hours before data is considered stale (default: 24)")
     parser.add_argument("--no-pre-screening", action="store_true",
                        help="Disable symbol pre-screening (process all symbols regardless of type)")
+    parser.add_argument("--use-dcs", action="store_true",
+                       help="Enable Data Coverage Score (DCS) prioritization")
+    parser.add_argument("--min-dcs", type=float, default=0.0,
+                       help="Minimum DCS score for symbol selection (0.0-1.0, default: 0.0)")
     
     args = parser.parse_args()
     
@@ -562,7 +593,9 @@ def main():
     result = extractor.run_incremental_extraction(
         limit=args.limit,
         staleness_hours=args.staleness_hours,
-        enable_pre_screening=not args.no_pre_screening
+        enable_pre_screening=not args.no_pre_screening,
+        use_dcs=args.use_dcs,
+        min_dcs=args.min_dcs
     )
     
     # Exit with appropriate code
