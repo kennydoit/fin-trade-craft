@@ -348,6 +348,204 @@ class WatermarkManager:
         
         return final_symbols
     
+    def _symbol_needs_processing(self, table_name: str, symbol_id: int, 
+                               staleness_hours: int, max_failures: int) -> bool:
+        """
+        Check if a specific symbol needs processing.
+        
+        Args:
+            table_name: Name of the table being tracked
+            symbol_id: Symbol ID to check
+            staleness_hours: Hours before data is considered stale
+            max_failures: Maximum consecutive failures before giving up
+            
+        Returns:
+            True if symbol needs processing
+        """
+        # Check watermark status
+        watermark_query = """
+            SELECT last_successful_run, consecutive_failures
+            FROM source.extraction_watermarks
+            WHERE table_name = %s AND symbol_id = %s
+        """
+        
+        result = self.db.fetch_query(watermark_query, (table_name, symbol_id))
+        
+        if not result:
+            # No watermark record - needs processing
+            return True
+        
+        last_successful_run, consecutive_failures = result[0]
+        
+        # Check if too many failures
+        if consecutive_failures and consecutive_failures >= max_failures:
+            return False
+        
+        # Check staleness
+        if last_successful_run:
+            hours_since_last = (datetime.now() - last_successful_run).total_seconds() / 3600
+            return hours_since_last >= staleness_hours
+        
+        return True  # No successful run yet
+    
+    def get_symbols_needing_processing_with_dcs(self, table_name: str,
+                                              staleness_hours: int = 24,
+                                              max_failures: int = 3,
+                                              limit: Optional[int] = None,
+                                              quarterly_gap_detection: bool = True,
+                                              reporting_lag_days: int = 45,
+                                              enable_pre_screening: bool = True,
+                                              min_dcs_threshold: float = 0.3) -> List[Dict[str, Any]]:
+        """
+        Get symbols needing processing with DCS-based prioritization.
+        
+        This method integrates the Data Coverage Score system to prioritize extraction
+        based on data quality and completeness metrics.
+        
+        Args:
+            table_name: Name of the table being tracked
+            staleness_hours: How many hours before data is considered stale
+            max_failures: Maximum consecutive failures before giving up
+            limit: Maximum number of symbols to return
+            quarterly_gap_detection: Enable quarterly gap detection for financial statements
+            reporting_lag_days: Days after quarter end before data should be available
+            enable_pre_screening: Enable symbol pre-screening to avoid likely failures
+            min_dcs_threshold: Minimum DCS score required for inclusion
+            
+        Returns:
+            List of symbol data ordered by extraction priority (DCS + staleness)
+        """
+        try:
+            from .universe_management import UniverseManager
+            universe_manager = UniverseManager()
+            
+            # Get DCS-prioritized symbols
+            prioritized_symbols = universe_manager.get_extraction_priority_list(
+                extractor_type=table_name,
+                limit=limit or 1000,  # Get larger set first for filtering
+                min_dcs=min_dcs_threshold
+            )
+            
+            if not prioritized_symbols:
+                print("⚠️ No DCS-prioritized symbols found, falling back to standard method")
+                return self.get_symbols_needing_processing(
+                    table_name, staleness_hours, max_failures, limit,
+                    quarterly_gap_detection, reporting_lag_days, enable_pre_screening
+                )
+            
+            # Filter prioritized symbols through standard processing logic
+            symbols_needing_processing = []
+            
+            for symbol_info in prioritized_symbols:
+                symbol_id = symbol_info['symbol_id']
+                symbol = symbol_info['symbol']
+                
+                # Check if symbol needs processing using standard logic
+                if self._symbol_needs_processing(table_name, symbol_id, staleness_hours, max_failures):
+                    
+                    # Add DCS metadata to symbol info
+                    enhanced_symbol_info = {
+                        'symbol_id': symbol_id,
+                        'symbol': symbol,
+                        'dcs': symbol_info['dcs'],
+                        'current_tier': symbol_info['current_tier'],
+                        'hours_since_last_run': symbol_info['hours_since_last_run'],
+                        'extraction_priority_score': self._calculate_extraction_priority_score(
+                            symbol_info['dcs'], 
+                            symbol_info['hours_since_last_run'],
+                            symbol_info['current_tier']
+                        )
+                    }
+                    
+                    symbols_needing_processing.append(enhanced_symbol_info)
+                    
+                    # Apply limit if specified
+                    if limit and len(symbols_needing_processing) >= limit:
+                        break
+            
+            # Apply quarterly gap detection if enabled
+            if quarterly_gap_detection and table_name in ['balance_sheet', 'cash_flow', 'income_statement']:
+                symbols_needing_processing = self._apply_quarterly_gap_filtering(
+                    symbols_needing_processing, table_name, reporting_lag_days
+                )
+            
+            # Apply pre-screening if enabled
+            if enable_pre_screening and SYMBOL_SCREENER_AVAILABLE:
+                symbols_needing_processing = self._apply_pre_screening_to_dcs_symbols(symbols_needing_processing)
+            
+            print(f"🎯 DCS-prioritized processing: {len(symbols_needing_processing)} symbols selected")
+            if symbols_needing_processing:
+                avg_dcs = sum(s['dcs'] for s in symbols_needing_processing) / len(symbols_needing_processing)
+                tier_counts = {}
+                for s in symbols_needing_processing:
+                    tier = s['current_tier']
+                    tier_counts[tier] = tier_counts.get(tier, 0) + 1
+                
+                print(f"  Average DCS: {avg_dcs:.3f}")
+                print(f"  Tier distribution: {tier_counts}")
+            
+            return symbols_needing_processing
+            
+        except ImportError:
+            print("⚠️ Universe management not available, falling back to standard method")
+            return self.get_symbols_needing_processing(
+                table_name, staleness_hours, max_failures, limit,
+                quarterly_gap_detection, reporting_lag_days, enable_pre_screening
+            )
+    
+    def _calculate_extraction_priority_score(self, dcs: float, hours_since_last_run: float, 
+                                           current_tier: str) -> float:
+        """
+        Calculate extraction priority score combining DCS, staleness, and tier.
+        
+        Args:
+            dcs: Data Coverage Score (0-1)
+            hours_since_last_run: Hours since last successful run
+            current_tier: Universe tier (core, extended, long_tail)
+            
+        Returns:
+            Priority score (higher = more important)
+        """
+        # Base score from DCS (40% weight)
+        dcs_component = 0.4 * dcs
+        
+        # Staleness component (40% weight) - normalize hours to 0-1 scale
+        max_staleness_hours = 168  # 1 week
+        staleness_normalized = min(hours_since_last_run / max_staleness_hours, 1.0)
+        staleness_component = 0.4 * staleness_normalized
+        
+        # Tier priority component (20% weight)
+        tier_weights = {'core': 1.0, 'extended': 0.7, 'long_tail': 0.3}
+        tier_component = 0.2 * tier_weights.get(current_tier, 0.3)
+        
+        return dcs_component + staleness_component + tier_component
+    
+    def _apply_quarterly_gap_filtering(self, symbols: List[Dict[str, Any]], 
+                                     table_name: str, reporting_lag_days: int) -> List[Dict[str, Any]]:
+        """Apply quarterly gap detection filtering to symbols."""
+        # This would integrate with existing quarterly gap detection logic
+        # For now, return symbols as-is since quarterly gap detection is applied elsewhere
+        return symbols
+    
+    def _apply_pre_screening_to_dcs_symbols(self, symbols: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Apply pre-screening to filter out likely failures from DCS symbols."""
+        if not SYMBOL_SCREENER_AVAILABLE:
+            return symbols
+        
+        screener = SymbolScreener()
+        symbol_list = [{'symbol_id': s['symbol_id'], 'symbol': s['symbol']} for s in symbols]
+        
+        # Get screening results
+        screening_results = screener.screen_symbols(symbol_list)
+        eligible_symbol_ids = set(s['symbol_id'] for s in screening_results['eligible_symbols'])
+        
+        # Filter symbols
+        filtered_symbols = [s for s in symbols if s['symbol_id'] in eligible_symbol_ids]
+        
+        print(f"🔍 Pre-screening DCS symbols: {len(symbols)} → {len(filtered_symbols)} symbols")
+        
+        return filtered_symbols
+    
     def _get_symbols_without_quarterly_gap_detection(self, table_name: str,
                                                    staleness_hours: int,
                                                    max_failures: int,
