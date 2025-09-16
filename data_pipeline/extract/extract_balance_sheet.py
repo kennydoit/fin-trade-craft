@@ -464,23 +464,31 @@ class BalanceSheetExtractor:
         return result
     
     def run_incremental_extraction(self, limit: Optional[int] = None, 
-                                 staleness_hours: int = 24, 
+                                 staleness_hours: int = 24,
                                  quarterly_gap_detection: bool = True,
-                                 enable_pre_screening: bool = True) -> Dict[str, Any]:
+                                 enable_pre_screening: bool = True,
+                                 use_dcs_prioritization: bool = False,
+                                 min_dcs_threshold: float = 0.4) -> Dict[str, Any]:
         """
-        Run incremental extraction for symbols that need processing.
+        Run incremental extraction for symbols that need processing with optional DCS prioritization.
         
         Args:
             limit: Maximum number of symbols to process
             staleness_hours: Hours before data is considered stale
             quarterly_gap_detection: Enable quarterly gap detection for financial statements
             enable_pre_screening: Enable symbol pre-screening to avoid likely failures
+            use_dcs_prioritization: Use Data Coverage Score for intelligent prioritization
+            min_dcs_threshold: Minimum DCS score for inclusion (when using DCS)
             
         Returns:
             Processing summary
         """
-        print(f"🚀 Starting incremental balance sheet extraction with adaptive rate limiting...")
+        extraction_method = "DCS-prioritized" if use_dcs_prioritization else "standard"
+        print(f"🚀 Starting incremental balance sheet extraction ({extraction_method}) with adaptive rate limiting...")
         print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}, quarterly_gap_detection={quarterly_gap_detection}, pre_screening={enable_pre_screening}")
+        
+        if use_dcs_prioritization:
+            print(f"🎯 DCS Configuration: min_threshold={min_dcs_threshold}")
         
         with self._get_db_manager() as db:
             # Ensure schema exists
@@ -488,15 +496,37 @@ class BalanceSheetExtractor:
             
             watermark_mgr = self._initialize_watermark_manager(db)
             
-            # Get symbols needing processing with quarterly gap detection and pre-screening
-            symbols_to_process = watermark_mgr.get_symbols_needing_processing(
-                self.table_name, 
-                staleness_hours=staleness_hours, 
-                limit=limit,
-                quarterly_gap_detection=quarterly_gap_detection,
-                reporting_lag_days=45,  # Standard 45-day reporting lag for quarterly data
-                enable_pre_screening=enable_pre_screening  # Use the parameter
-            )
+            # Get symbols needing processing - use DCS method if enabled
+            if use_dcs_prioritization:
+                try:
+                    symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_dcs(
+                        self.table_name,
+                        staleness_hours=staleness_hours,
+                        limit=limit,
+                        quarterly_gap_detection=quarterly_gap_detection,
+                        enable_pre_screening=enable_pre_screening,
+                        min_dcs_threshold=min_dcs_threshold
+                    )
+                except Exception as e:
+                    print(f"⚠️ DCS prioritization failed ({e}), falling back to standard method")
+                    symbols_to_process = watermark_mgr.get_symbols_needing_processing(
+                        self.table_name,
+                        staleness_hours=staleness_hours,
+                        limit=limit,
+                        quarterly_gap_detection=quarterly_gap_detection,
+                        reporting_lag_days=45,
+                        enable_pre_screening=enable_pre_screening
+                    )
+            else:
+                # Get symbols needing processing with quarterly gap detection and pre-screening
+                symbols_to_process = watermark_mgr.get_symbols_needing_processing(
+                    self.table_name, 
+                    staleness_hours=staleness_hours, 
+                    limit=limit,
+                    quarterly_gap_detection=quarterly_gap_detection,
+                    reporting_lag_days=45,  # Standard 45-day reporting lag for quarterly data
+                    enable_pre_screening=enable_pre_screening  # Use the parameter
+                )
             
             print(f"Found {len(symbols_to_process)} symbols needing processing")
             
@@ -572,6 +602,10 @@ def main():
                        help="Disable quarterly gap detection (use only time-based staleness)")
     parser.add_argument("--no-pre-screening", action="store_true",
                        help="Disable symbol pre-screening (process all symbols regardless of type)")
+    parser.add_argument("--use-dcs", action="store_true",
+                       help="Enable Data Coverage Score prioritization for intelligent extraction")
+    parser.add_argument("--min-dcs", type=float, default=0.4,
+                       help="Minimum DCS threshold when using DCS prioritization (default: 0.4)")
     
     args = parser.parse_args()
     
@@ -580,7 +614,9 @@ def main():
         limit=args.limit,
         staleness_hours=args.staleness_hours,
         quarterly_gap_detection=not args.no_quarterly_gap_detection,
-        enable_pre_screening=not args.no_pre_screening
+        enable_pre_screening=not args.no_pre_screening,
+        use_dcs_prioritization=args.use_dcs,
+        min_dcs_threshold=args.min_dcs
     )
     
     # Exit with appropriate code
