@@ -677,7 +677,9 @@ class EarningsCallTranscriptsExtractor:
                       staleness_hours: int = 24,
                       max_failures: int = 3,
                       force_refresh: bool = False,
-                      dry_run: bool = False) -> Dict[str, Any]:
+                      dry_run: bool = False,
+                      use_dcs: bool = False,
+                      min_dcs: float = 0.0) -> Dict[str, Any]:
         """
         Run the earnings call transcripts extraction process.
         
@@ -688,6 +690,8 @@ class EarningsCallTranscriptsExtractor:
             max_failures: Maximum consecutive failures before giving up
             force_refresh: Force processing even if recently processed
             dry_run: Only show what would be processed
+            use_dcs: Enable Data Coverage Score prioritization
+            min_dcs: Minimum DCS score for symbol selection
             
         Returns:
             Extraction statistics
@@ -700,17 +704,43 @@ class EarningsCallTranscriptsExtractor:
         print(f"   Max failures: {max_failures}")
         print(f"   Force refresh: {force_refresh}")
         print(f"   Dry run: {dry_run}")
+        print(f"   Use DCS: {use_dcs}")
+        print(f"   Min DCS: {min_dcs}")
         
         # Initialize adaptive rate limiting
         self.rate_limiter.start_processing()
         
-        # Get symbols needing processing
-        symbols_to_process = self.get_symbols_needing_processing(
-            staleness_hours=staleness_hours,
-            max_failures=max_failures,
-            limit=limit,
-            exchange_filter=exchange_filter
-        )
+        # Get symbols needing processing with DCS prioritization if requested
+        if use_dcs:
+            print(f"🎯 Using Data Coverage Score prioritization with min_dcs={min_dcs}")
+            try:
+                # Use watermark manager for DCS-based selection
+                watermark_mgr = WatermarkManager(self.db)
+                symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_dcs(
+                    TABLE_NAME,  # earnings_call_transcripts
+                    staleness_hours=staleness_hours,
+                    limit=limit,
+                    quarterly_gap_detection=False,  # Not applicable for earnings transcripts
+                    enable_pre_screening=True,
+                    min_dcs_threshold=min_dcs
+                )
+                print(f"✅ DCS prioritization successful: {len(symbols_to_process)} symbols selected")
+            except Exception as e:
+                print(f"⚠️ DCS prioritization failed ({e}), falling back to standard method")
+                symbols_to_process = self.get_symbols_needing_processing(
+                    staleness_hours=staleness_hours,
+                    max_failures=max_failures,
+                    limit=limit,
+                    exchange_filter=exchange_filter
+                )
+        else:
+            # Standard processing without DCS
+            symbols_to_process = self.get_symbols_needing_processing(
+                staleness_hours=staleness_hours,
+                max_failures=max_failures,
+                limit=limit,
+                exchange_filter=exchange_filter
+            )
         
         print(f"\nFound {len(symbols_to_process)} symbols needing processing")
         
@@ -868,6 +898,19 @@ Examples:
         help="Show what would be processed without making API calls"
     )
     
+    parser.add_argument(
+        "--use-dcs",
+        action="store_true",
+        help="Enable Data Coverage Score (DCS) prioritization"
+    )
+    
+    parser.add_argument(
+        "--min-dcs",
+        type=float,
+        default=0.0,
+        help="Minimum DCS score for symbol selection (0.0-1.0, default: 0.0)"
+    )
+    
     args = parser.parse_args()
     
     try:
@@ -884,7 +927,9 @@ Examples:
                 staleness_hours=args.staleness_hours,
                 max_failures=args.max_failures,
                 force_refresh=args.force_refresh,
-                dry_run=args.dry_run
+                dry_run=args.dry_run,
+                use_dcs=args.use_dcs,
+                min_dcs=args.min_dcs
             )
             
             if not args.dry_run:

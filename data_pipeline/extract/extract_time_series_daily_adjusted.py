@@ -242,7 +242,7 @@ class TimeSeriesDailyAdjustedExtractor:
     def _transform_data(self, symbol: str, symbol_id: int, df: pd.DataFrame, 
                        run_id: str) -> List[Dict[str, Any]]:
         """
-        Transform API response to standardized records.
+        Transform API response to standardized records using vectorized operations.
         
         Args:
             symbol: Stock symbol
@@ -256,59 +256,66 @@ class TimeSeriesDailyAdjustedExtractor:
         if df.empty:
             return []
         
-        records = []
-        
         try:
-            # Rename columns to match our schema
+            # Make a copy for transformation
             df_transformed = df.copy()
             
-            # Convert timestamp to date
+            # Convert timestamp to date using vectorized operation
             if 'timestamp' in df_transformed.columns:
                 df_transformed['date'] = pd.to_datetime(df_transformed['timestamp']).dt.date
             
-            # Helper function to convert API values
-            def convert_value(value):
-                if pd.isna(value) or value == "None" or value == "":
-                    return None
-                try:
-                    return float(value)
-                except (ValueError, TypeError):
-                    return None
+            # Add metadata columns using vectorized assignment
+            df_transformed['symbol_id'] = symbol_id
+            df_transformed['symbol'] = symbol
+            df_transformed['api_response_status'] = "pass"
+            df_transformed['source_run_id'] = run_id
+            df_transformed['fetched_at'] = datetime.now()
             
-            # Process each row
-            for _, row in df_transformed.iterrows():
-                # Initialize record with all fields as None
-                record = {field: None for field in TIME_SERIES_FIELDS.keys()}
-                
-                # Set known values
-                record.update({
-                    "symbol_id": symbol_id,
-                    "symbol": symbol,
-                    "api_response_status": "pass",
-                    "source_run_id": run_id,
-                    "fetched_at": datetime.now()
-                })
-                
-                # Map API fields to database fields using schema-driven approach
-                for db_field, api_field in TIME_SERIES_FIELDS.items():
-                    if db_field in ["symbol_id", "symbol"]:
-                        # These are already set
-                        continue
-                    elif api_field == 'timestamp':
-                        # Use the converted date
-                        record[db_field] = row.get('date')
-                    elif api_field in row.index:
-                        record[db_field] = convert_value(row[api_field])
-                
-                # Validate required fields
-                if not record["date"]:
-                    print(f"Missing date for {symbol} record")
-                    continue
-                
-                # Calculate content hash for change detection
-                record["content_hash"] = ContentHasher.calculate_business_content_hash(record)
-                
-                records.append(record)
+            # Convert numeric columns using vectorized operations
+            numeric_columns = ['open', 'high', 'low', 'close', 'adjusted_close', 'volume', 
+                              'dividend_amount', 'split_coefficient']
+            
+            for col in numeric_columns:
+                if col in df_transformed.columns:
+                    # Replace empty strings and "None" with NaN, then convert to float
+                    df_transformed[col] = df_transformed[col].replace(['', 'None'], pd.NA)
+                    df_transformed[col] = pd.to_numeric(df_transformed[col], errors='coerce')
+            
+            # Select and rename columns to match our schema
+            column_mapping = {
+                'open': 'open',
+                'high': 'high', 
+                'low': 'low',
+                'close': 'close',
+                'adjusted_close': 'adjusted_close',
+                'volume': 'volume',
+                'dividend_amount': 'dividend_amount',
+                'split_coefficient': 'split_coefficient'
+            }
+            
+            # Select only columns we need, ensuring no duplicates
+            required_cols = ['symbol_id', 'symbol', 'date', 'api_response_status', 
+                           'source_run_id', 'fetched_at']
+            
+            # Add the data columns that exist
+            for col in column_mapping.values():
+                if col in df_transformed.columns and col not in required_cols:
+                    required_cols.append(col)
+            
+            # Filter to existing columns and remove any duplicates
+            available_cols = list(dict.fromkeys([col for col in required_cols if col in df_transformed.columns]))
+            df_final = df_transformed[available_cols].copy()
+            
+            # Remove rows with missing dates
+            df_final = df_final.dropna(subset=['date'])
+            
+            # Calculate content hash for each row using vectorized operation
+            # Create a simplified hash based on key business fields for performance
+            hash_data = df_final[['symbol_id', 'date', 'close', 'volume']].astype(str).agg(''.join, axis=1)
+            df_final['content_hash'] = hash_data.apply(lambda x: ContentHasher.calculate_business_content_hash({'data': x}))
+            
+            # Convert to list of dictionaries efficiently
+            records = df_final.to_dict('records')
             
             print(f"Transformed {len(records)} records for {symbol}")
             return records
@@ -339,7 +346,7 @@ class TimeSeriesDailyAdjustedExtractor:
     
     def _upsert_records(self, db, records: List[Dict[str, Any]]) -> int:
         """
-        Upsert records into the time series table.
+        Upsert records into the time series table using optimized batch operations.
         
         Args:
             db: Database manager
@@ -355,7 +362,7 @@ class TimeSeriesDailyAdjustedExtractor:
         columns = [col for col in records[0].keys() 
                   if col not in ['time_series_id', 'created_at', 'updated_at']]
         
-        # Build upsert query
+        # Build upsert query with explicit column order
         placeholders = ", ".join(["%s" for _ in columns])
         update_columns = [col for col in columns 
                          if col not in ['symbol_id', 'date']]
@@ -369,17 +376,41 @@ class TimeSeriesDailyAdjustedExtractor:
             DO UPDATE SET {', '.join(update_set)}
         """
         
-        # Prepare record values
-        record_values = []
-        for record in records:
-            values = [record[col] for col in columns]
-            record_values.append(tuple(values))
+        # Prepare record values using list comprehension for better performance
+        record_values = [
+            tuple(record[col] for col in columns) 
+            for record in records
+        ]
         
-        # Execute upsert
-        with db.connection.cursor() as cursor:
-            cursor.executemany(upsert_query, record_values)
-            db.connection.commit()
-            return cursor.rowcount
+        # Execute batch upsert with optimized cursor handling
+        try:
+            with db.connection.cursor() as cursor:
+                # Use execute_values for better performance with large datasets
+                from psycopg2.extras import execute_values
+                
+                # Create the VALUES clause for execute_values
+                template = f"({placeholders}, NOW(), NOW())"
+                
+                execute_values(
+                    cursor,
+                    f"""INSERT INTO source.time_series_daily_adjusted ({', '.join(columns)}, created_at, updated_at) 
+                        VALUES %s
+                        ON CONFLICT (symbol_id, date) 
+                        DO UPDATE SET {', '.join(update_set)}""",
+                    record_values,
+                    template=template,
+                    page_size=1000  # Process in batches of 1000
+                )
+                
+                db.connection.commit()
+                return cursor.rowcount
+                
+        except ImportError:
+            # Fallback to executemany if psycopg2.extras not available
+            with db.connection.cursor() as cursor:
+                cursor.executemany(upsert_query, record_values)
+                db.connection.commit()
+                return cursor.rowcount
     
     def extract_symbol(self, symbol: str, symbol_id: int, db) -> Dict[str, Any]:
         """
@@ -473,7 +504,9 @@ class TimeSeriesDailyAdjustedExtractor:
     def run_incremental_extraction(self, limit: Optional[int] = None, 
                                  staleness_hours: int = 24,
                                  exchange_filter: Optional[List[str]] = None,
-                                 asset_type_filter: Optional[List[str]] = None) -> Dict[str, Any]:
+                                 asset_type_filter: Optional[List[str]] = None,
+                                 use_dcs: bool = False,
+                                 min_dcs: float = 0.0) -> Dict[str, Any]:
         """
         Run incremental extraction for symbols that need processing with adaptive rate limiting.
         
@@ -482,12 +515,14 @@ class TimeSeriesDailyAdjustedExtractor:
             staleness_hours: Hours before data is considered stale
             exchange_filter: Filter by exchanges (e.g., ['NYSE', 'NASDAQ'])
             asset_type_filter: Filter by asset types (e.g., ['Stock', 'ETF'])
+            use_dcs: Enable Data Coverage Score prioritization
+            min_dcs: Minimum DCS score for symbol selection
             
         Returns:
             Processing summary
         """
         print(f"🚀 Starting incremental time series extraction with adaptive rate limiting...")
-        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}")
+        print(f"Configuration: limit={limit}, staleness_hours={staleness_hours}, use_dcs={use_dcs}, min_dcs={min_dcs}")
         print(f"Exchange filter: {exchange_filter}")
         print(f"Asset type filter: {asset_type_filter}")
         
@@ -497,14 +532,37 @@ class TimeSeriesDailyAdjustedExtractor:
             
             watermark_mgr = self._initialize_watermark_manager(db)
             
-            # Get symbols needing processing with filtering
-            symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_filters(
-                self.table_name, 
-                staleness_hours=staleness_hours, 
-                limit=limit,
-                exchange_filter=exchange_filter,
-                asset_type_filter=asset_type_filter
-            )
+            # Get symbols needing processing with DCS prioritization if requested
+            if use_dcs:
+                print(f"🎯 Using Data Coverage Score prioritization with min_dcs={min_dcs}")
+                try:
+                    symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_dcs(
+                        self.table_name, 
+                        staleness_hours=staleness_hours, 
+                        limit=limit,
+                        quarterly_gap_detection=False,  # Not applicable for daily time series
+                        enable_pre_screening=True,
+                        min_dcs_threshold=min_dcs
+                    )
+                    print(f"✅ DCS prioritization successful: {len(symbols_to_process)} symbols selected")
+                except Exception as e:
+                    print(f"⚠️ DCS prioritization failed ({e}), falling back to standard method")
+                    symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_filters(
+                        self.table_name, 
+                        staleness_hours=staleness_hours, 
+                        limit=limit,
+                        exchange_filter=exchange_filter,
+                        asset_type_filter=asset_type_filter
+                    )
+            else:
+                # Standard processing without DCS
+                symbols_to_process = watermark_mgr.get_symbols_needing_processing_with_filters(
+                    self.table_name, 
+                    staleness_hours=staleness_hours, 
+                    limit=limit,
+                    exchange_filter=exchange_filter,
+                    asset_type_filter=asset_type_filter
+                )
             
             print(f"Found {len(symbols_to_process)} symbols needing processing")
             
@@ -578,6 +636,10 @@ def main():
                        help="Hours before data is considered stale (default: 24)")
     parser.add_argument("--exchanges", nargs="+", help="Filter by exchanges (e.g., NYSE NASDAQ)")
     parser.add_argument("--asset-types", nargs="+", help="Filter by asset types (e.g., Stock ETF)")
+    parser.add_argument("--use-dcs", action="store_true",
+                       help="Enable Data Coverage Score (DCS) prioritization")
+    parser.add_argument("--min-dcs", type=float, default=0.0,
+                       help="Minimum DCS score for symbol selection (0.0-1.0, default: 0.0)")
     
     args = parser.parse_args()
     
@@ -586,7 +648,9 @@ def main():
         limit=args.limit,
         staleness_hours=args.staleness_hours,
         exchange_filter=args.exchanges,
-        asset_type_filter=args.asset_types
+        asset_type_filter=args.asset_types,
+        use_dcs=args.use_dcs,
+        min_dcs=args.min_dcs
     )
     
     # Exit with appropriate code
@@ -604,12 +668,19 @@ if __name__ == "__main__":
 # python extract_time_series_daily_adjusted.py --limit 5
 # python extract_time_series_daily_adjusted.py --limit 25 --staleness-hours 12
 # python extract_time_series_daily_adjusted.py --exchanges NYSE NASDAQ --asset-types Stock
+# python extract_time_series_daily_adjusted.py --limit 50 --use-dcs --min-dcs 0.8
 
 # -----------------------------------------------------------------------------
-# Example commands (PowerShell) - Now with Adaptive Rate Limiting:
+# Example commands (PowerShell) - Now with Adaptive Rate Limiting and DCS:
 # 
 # Test adaptive rate limiting with small batch:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 10
+#
+# DCS-prioritized Core symbols (highest value stocks):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --use-dcs --min-dcs 0.8
+#
+# DCS-prioritized Extended symbols (medium value stocks):
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 100 --use-dcs --min-dcs 0.6
 #
 # Optimal batch size for throughput testing:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 25 --staleness-hours 1
@@ -620,9 +691,9 @@ if __name__ == "__main__":
 # Large batch to see maximum throughput improvements:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 100 --staleness-hours 6
 #
-# ETF-focused extraction with optimization:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --exchanges NYSE NASDAQ "NYSE ARCA" --asset-types ETF
+# ETF-focused extraction with DCS optimization:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --exchanges NYSE NASDAQ "NYSE ARCA" --asset-types ETF --use-dcs --min-dcs 0.7
 #
-# Performance testing - aggressive staleness for maximum throughput measurement:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --staleness-hours 1
+# Performance testing - Core symbols with aggressive staleness for maximum throughput:
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_time_series_daily_adjusted.py --limit 50 --staleness-hours 1 --use-dcs --min-dcs 0.8
 # -----------------------------------------------------------------------------

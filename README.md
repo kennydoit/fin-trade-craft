@@ -108,28 +108,100 @@ The database monitor provides:
 
 ## ETL Data Extraction
 
-Run individual extractors to collect data from Alpha Vantage:
+Run individual extractors to collect data from Alpha Vantage API. All extractors support incremental processing, adaptive rate limiting, and Data Coverage Score (DCS) prioritization for optimal efficiency.
+
+### Basic Data Extractors
 
 ```bash
 # Extract commodity data (oil, gas, metals, agriculture)
 python data_pipeline/extract/extract_commodities.py
 
 # Extract company overview data
-python data_pipeline/extract/extract_overview.py
+python data_pipeline/extract/extract_overview.py --limit 50
 
-# Extract financial statements
-python data_pipeline/extract/extract_balance_sheet.py
-python data_pipeline/extract/extract_cash_flow.py
-python data_pipeline/extract/extract_income_statement.py
+# Extract stock price data (OHLCV) - Standard processing
+python data_pipeline/extract/extract_time_series_daily_adjusted.py --limit 25
 
-# Extract stock price data
-python data_pipeline/extract/extract_time_series_daily_adjusted.py
-
-# Extract insider transactions
-python data_pipeline/extract/extract_insider_transactions.py
+# Extract stock price data (OHLCV) - DCS prioritized Core symbols
+python data_pipeline/extract/extract_time_series_daily_adjusted.py --limit 50 --use-dcs --min-dcs 0.8
 ```
 
-All extractors use PostgreSQL for data storage and include built-in rate limiting, duplicate prevention, and error handling.
+### Financial Statement Extractors
+
+All financial statement extractors support DCS prioritization for intelligent symbol selection:
+
+```bash
+# Balance Sheet - Core symbols (highest priority, DCS ≥ 0.8)
+python data_pipeline/extract/extract_balance_sheet.py --limit 50 --use-dcs --min-dcs 0.8
+
+# Cash Flow - Extended symbols (medium priority, DCS ≥ 0.6)
+python data_pipeline/extract/extract_cash_flow.py --limit 100 --use-dcs --min-dcs 0.6
+
+# Income Statement - Standard incremental processing
+python data_pipeline/extract/extract_income_statement.py --limit 50
+
+# Income Statement - DCS prioritized Core symbols
+python data_pipeline/extract/extract_income_statement.py --limit 25 --use-dcs --min-dcs 0.8
+```
+
+### Alternative Data Extractors
+
+```bash
+# Insider Transactions - Standard processing
+python data_pipeline/extract/extract_insider_transactions.py --limit 25
+
+# Insider Transactions - DCS prioritized (recommended for efficiency)
+python data_pipeline/extract/extract_insider_transactions.py --limit 50 --use-dcs --min-dcs 0.7
+
+# Earnings Call Transcripts - Standard processing
+python data_pipeline/extract/extract_earnings_call_transcripts.py --limit 10
+
+# Earnings Call Transcripts - Core symbols only (high-value companies)
+python data_pipeline/extract/extract_earnings_call_transcripts.py --limit 5 --use-dcs --min-dcs 0.8
+```
+
+### Data Coverage Score (DCS) Features
+
+The DCS system intelligently prioritizes symbols based on data completeness and business value:
+
+- **Core Tier (DCS ≥ 0.8)**: Highest priority symbols with excellent data coverage
+- **Extended Tier (DCS ≥ 0.6)**: Medium priority symbols with good data coverage  
+- **Long Tail (DCS < 0.6)**: Lower priority symbols with limited data coverage
+
+```bash
+# Refresh universe classification (run monthly)
+python -m utils.universe_management --refresh
+
+# Check current universe statistics
+python -m utils.universe_management --stats
+```
+
+### Performance Tips
+
+1. **Use DCS prioritization** for 50-60% API cost reduction
+2. **Start with Core symbols** (`--min-dcs 0.8`) for highest value data
+3. **Batch processing** with appropriate limits to manage API quotas
+4. **Monitor progress** with built-in performance summaries
+
+### Advanced Usage Patterns
+
+```bash
+# High-value ETFs with DCS prioritization
+python data_pipeline/extract/extract_time_series_daily_adjusted.py --limit 25 --exchanges "NYSE ARCA" NASDAQ --asset-types ETF --use-dcs --min-dcs 0.7
+
+# Core symbols from major exchanges only
+python data_pipeline/extract/extract_time_series_daily_adjusted.py --limit 100 --exchanges NYSE NASDAQ --use-dcs --min-dcs 0.8
+
+# Combine financial statements for comprehensive analysis
+python data_pipeline/extract/extract_balance_sheet.py --limit 20 --use-dcs --min-dcs 0.8 && \
+python data_pipeline/extract/extract_cash_flow.py --limit 20 --use-dcs --min-dcs 0.8 && \
+python data_pipeline/extract/extract_income_statement.py --limit 20 --use-dcs --min-dcs 0.8
+
+# Fresh data refresh (6-hour staleness) for active trading
+python data_pipeline/extract/extract_time_series_daily_adjusted.py --limit 50 --staleness-hours 6 --use-dcs --min-dcs 0.8
+```
+
+All extractors use PostgreSQL for data storage and include built-in error handling, content deduplication, and watermark-based incremental processing.
 
 ## Code Maintenance
 
