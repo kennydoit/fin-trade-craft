@@ -17,7 +17,7 @@ recreated before loading the new records.
 The table schema is created as::
 
     transformed.symbol_universes(
-        universe_id       VARCHAR,     -- Simple format: S123456, C123456, D123456  
+        universe_id       VARCHAR,     -- Simple format: S123456, C123456, D123456
         universe_name     VARCHAR,
         symbol            VARCHAR,
         exchange          VARCHAR,
@@ -50,26 +50,26 @@ from db.postgres_database_manager import PostgresDatabaseManager
 
 def _generate_simple_universe_id(data_source_type: str, db: PostgresDatabaseManager) -> str:
     """Generate a simple universe ID based on data source type.
-    
+
     Parameters
     ----------
     data_source_type:
         Type of data source: 'S' for SQL, 'C' for CSV, 'D' for DataFrame
     db:
         Database manager for checking uniqueness
-        
+
     Returns
     -------
     str
         Universe ID in format: {type}{6-digit-number} (e.g., 'S123456', 'C987654')
     """
     max_attempts = 100
-    
-    for attempt in range(max_attempts):
+
+    for _attempt in range(max_attempts):
         # Generate 6-digit random number
         number = random.randint(100000, 999999)
         universe_id = f"{data_source_type}{number}"
-        
+
         # Check if ID already exists
         check_query = "SELECT COUNT(*) FROM transformed.symbol_universes WHERE universe_id = %s"
         try:
@@ -79,17 +79,17 @@ def _generate_simple_universe_id(data_source_type: str, db: PostgresDatabaseMana
         except Exception:
             # If table doesn't exist yet, the ID is definitely unique
             return universe_id
-    
+
     # Enhanced fallback: Use timestamp + microseconds + attempt counter for guaranteed uniqueness
     now = datetime.now()
     timestamp_micro = f"{int(now.timestamp())}{now.microsecond:06d}"
-    
+
     # Try timestamp-based IDs with incrementing suffix
     for suffix in range(100):
         # Take last 5 digits of timestamp+microseconds + 1 digit suffix
         unique_suffix = f"{timestamp_micro[-5:]}{suffix}"[:6].zfill(6)
         universe_id = f"{data_source_type}{unique_suffix}"
-        
+
         # Final check for timestamp-based ID
         check_query = "SELECT COUNT(*) FROM transformed.symbol_universes WHERE universe_id = %s"
         try:
@@ -98,7 +98,7 @@ def _generate_simple_universe_id(data_source_type: str, db: PostgresDatabaseMana
                 return universe_id
         except Exception:
             return universe_id
-    
+
     # Ultimate fallback - this should never happen
     import uuid
     fallback_id = str(uuid.uuid4()).replace('-', '')[:6]
@@ -264,7 +264,7 @@ def main(argv: Iterable[str] | None = None) -> None:
 
 def load_universe_from_query(sql_query: str, universe_name: str, start_fresh: bool = False) -> str:
     """Load a symbol universe using a SQL query.
-    
+
     Parameters
     ----------
     sql_query:
@@ -273,14 +273,14 @@ def load_universe_from_query(sql_query: str, universe_name: str, start_fresh: bo
         Name of the universe to apply to all rows
     start_fresh:
         When True, drop and recreate table before loading
-        
+
     Returns
     -------
     str
         The generated universe_id applied to the loaded rows (format: S######)
     """
     print(f"Loading SQL query universe: {universe_name}")  # noqa: T201
-    
+
     try:
         universe_id = load_symbol_universe(
             data=sql_query,
@@ -330,10 +330,10 @@ if __name__ == "__main__":  # pragma: no cover - CLI entry point
           );
         """
         universe_name = "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income"
-        
+
         # Single function call with SQL query and universe name as arguments
         load_universe_from_query(sql_query, universe_name, start_fresh=False)
-        
+
         # Uncomment to test the CSV-based universe instead of / in addition to SQL
         # csv_path = (
         #     Path(__file__).parent.parent

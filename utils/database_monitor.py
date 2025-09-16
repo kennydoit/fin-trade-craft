@@ -14,8 +14,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from tabulate import tabulate
-
 # Add the parent directory to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
@@ -32,9 +30,9 @@ class DatabaseMonitor:
         db_manager = PostgresDatabaseManager()
         with db_manager as db:
             query = """
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public' 
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
                 AND table_type = 'BASE TABLE'
                 ORDER BY table_name
             """
@@ -56,13 +54,13 @@ class DatabaseMonitor:
             # First, identify date/timestamp columns
             date_column_query = """
                 SELECT column_name, data_type
-                FROM information_schema.columns 
-                WHERE table_name = %s 
+                FROM information_schema.columns
+                WHERE table_name = %s
                 AND table_schema = 'public'
                 AND (data_type IN ('date', 'timestamp', 'timestamp with time zone', 'timestamp without time zone')
                      OR column_name IN ('date', 'updated_at', 'created_at', 'last_modified'))
-                ORDER BY 
-                    CASE 
+                ORDER BY
+                    CASE
                         WHEN column_name = 'updated_at' THEN 1
                         WHEN column_name = 'last_modified' THEN 2
                         WHEN column_name = 'date' THEN 3
@@ -91,13 +89,13 @@ class DatabaseMonitor:
         db_manager = PostgresDatabaseManager()
         with db_manager as db:
             query = """
-                SELECT 
+                SELECT
                     column_name,
                     data_type,
                     is_nullable,
                     column_default
-                FROM information_schema.columns 
-                WHERE table_name = %s 
+                FROM information_schema.columns
+                WHERE table_name = %s
                 AND table_schema = 'public'
                 ORDER BY ordinal_position
             """
@@ -111,8 +109,8 @@ class DatabaseMonitor:
             # Get all columns
             columns_query = """
                 SELECT column_name, data_type
-                FROM information_schema.columns 
-                WHERE table_name = %s 
+                FROM information_schema.columns
+                WHERE table_name = %s
                 AND table_schema = 'public'
                 ORDER BY ordinal_position
             """
@@ -144,7 +142,7 @@ class DatabaseMonitor:
         db_manager = PostgresDatabaseManager()
         with db_manager as db:
             query = """
-                SELECT 
+                SELECT
                     pg_size_pretty(pg_total_relation_size(%s)) as total_size,
                     pg_size_pretty(pg_relation_size(%s)) as table_size,
                     pg_size_pretty(pg_total_relation_size(%s) - pg_relation_size(%s)) as index_size
@@ -160,9 +158,9 @@ class DatabaseMonitor:
         with db_manager as db:
             # Check if table has api_response_status column
             status_col_query = """
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = %s 
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = %s
                 AND table_schema = 'public'
                 AND column_name = 'api_response_status'
             """
@@ -180,19 +178,14 @@ class DatabaseMonitor:
             """
             result = db.fetch_query(status_query)
 
-            return {status: count for status, count in result} if result else {}
+            return dict(result) if result else {}
 
     def generate_comprehensive_report(self):
         """Generate a comprehensive database monitoring report."""
-        print("=" * 80)
-        print("FIN-TRADE-CRAFT DATABASE MONITORING REPORT")
-        print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("=" * 80)
 
         tables = self.get_all_table_names()
 
         if not tables:
-            print("No tables found in the database.")
             return
 
         # Summary statistics
@@ -230,46 +223,27 @@ class DatabaseMonitor:
             )
 
         # Print summary table
-        print("\nDATABASE SUMMARY")
-        print(f"Total Tables: {len(tables)}")
-        print(f"Total Rows: {total_rows:,}")
-        print("Database Connection: PostgreSQL fin_trade_craft")
 
-        print("\nTABLE OVERVIEW")
-        print(tabulate(table_summary, headers="keys", tablefmt="grid"))
 
         # Detailed analysis for each table
-        print("\nDETAILED TABLE ANALYSIS")
-        print("=" * 80)
 
         for table_name in tables:
             self.print_table_details(table_name)
 
     def print_table_details(self, table_name):
         """Print detailed analysis for a specific table."""
-        print(f"\n📊 TABLE: {table_name.upper()}")
-        print("-" * 60)
 
         # Basic stats
         row_count = self.get_table_row_count(table_name)
         last_update, date_column = self.get_table_last_update(table_name)
         total_size, table_size, index_size = self.get_table_size_info(table_name)
 
-        print(f"Rows: {row_count:,}")
-        print(
-            f"Last Update: {last_update} ({date_column})"
-            if last_update
-            else "Last Update: N/A"
-        )
-        print(f"Storage: {total_size} (Table: {table_size}, Indexes: {index_size})")
 
         # API response status breakdown
         api_status = self.get_api_response_status_summary(table_name)
         if api_status:
-            print("API Status Breakdown:")
-            for status, count in api_status.items():
-                percentage = (count / row_count * 100) if row_count > 0 else 0
-                print(f"  {status}: {count:,} ({percentage:.1f}%)")
+            for _status, count in api_status.items():
+                (count / row_count * 100) if row_count > 0 else 0
 
         # Null analysis (for key columns only to avoid clutter)
         null_analysis = self.get_table_null_analysis(table_name)
@@ -282,15 +256,11 @@ class DatabaseMonitor:
                     important_nulls[col] = f"{null_count:,} ({null_rate:.1f}%)"
 
             if important_nulls:
-                print("Key Null Analysis:")
-                for col, null_info in important_nulls.items():
-                    print(f"  {col}: {null_info}")
+                for _col, _null_info in important_nulls.items():
+                    pass
 
     def get_data_freshness_report(self):
         """Generate a report focused on data freshness."""
-        print("=" * 60)
-        print("DATA FRESHNESS REPORT")
-        print("=" * 60)
 
         tables = self.get_all_table_names()
         freshness_data = []
@@ -340,7 +310,6 @@ class DatabaseMonitor:
             key=lambda x: x["Days Old"] if isinstance(x["Days Old"], int) else 999
         )
 
-        print(tabulate(freshness_data, headers="keys", tablefmt="grid"))
 
     def quick_status(self):
         """Print a quick status overview."""
@@ -348,9 +317,9 @@ class DatabaseMonitor:
         with db_manager as db:
             # Get all tables first
             tables_query = """
-                SELECT table_name 
-                FROM information_schema.tables 
-                WHERE table_schema = 'public' 
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
                 AND table_type = 'BASE TABLE'
                 ORDER BY table_name
             """
@@ -368,14 +337,12 @@ class DatabaseMonitor:
                 total_rows += count
                 table_counts.append((table, count))
 
-        print(f"📈 Quick Status: {len(tables)} tables, {total_rows:,} total rows")
 
         # Show top 3 tables by row count
         table_counts.sort(key=lambda x: x[1], reverse=True)
 
-        print("Top tables by size:")
-        for table, count in table_counts[:3]:
-            print(f"  {table}: {count:,} rows")
+        for _table, _count in table_counts[:3]:
+            pass
 
 
 def main():
@@ -409,8 +376,7 @@ def main():
             # Default to full report
             monitor.generate_comprehensive_report()
 
-    except Exception as e:
-        print(f"Error running database monitor: {e}")
+    except Exception:
         sys.exit(1)
 
 

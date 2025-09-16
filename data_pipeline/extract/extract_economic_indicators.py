@@ -3,25 +3,27 @@ Economic Indicators Extractor using incremental ETL architecture.
 Uses source schema, watermarks, and deterministic processing.
 """
 
+import argparse
+import json
 import os
 import sys
-import time
-import json
-import argparse
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Any
 
-import requests
 import pandas as pd
-import numpy as np
+import requests
 from dotenv import load_dotenv
 
 # Add the parent directories to the path so we can import from db and utils
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
-from utils.incremental_etl import DateUtils, ContentHasher, WatermarkManager, RunIdGenerator
 from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType
+from utils.incremental_etl import (
+    ContentHasher,
+    DateUtils,
+    RunIdGenerator,
+)
 
 # API configuration
 API_DELAY_SECONDS = 0.8  # Alpha Vantage rate limiting
@@ -69,11 +71,11 @@ ECONOMIC_INDICATORS_FIELDS = {
 class EconomicIndicatorsExtractor:
     """
     Extracts economic indicators data from Alpha Vantage API using modern ETL architecture.
-    
+
     Features:
     - Source schema storage with landing table pattern
     - Incremental processing with content hash deduplication
-    - Watermark management for tracking extraction progress  
+    - Watermark management for tracking extraction progress
     - API response caching with deterministic hashing
     - Configurable batch processing with rate limiting
     """
@@ -88,12 +90,12 @@ class EconomicIndicatorsExtractor:
         # Initialize components
         self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
-        
+
         # ETL utilities
         self.content_hasher = ContentHasher()
         self.date_utils = DateUtils()
         self.run_id_generator = RunIdGenerator()
-        
+
         # Initialize adaptive rate limiter for time series processing
         self.rate_limiter = AdaptiveRateLimiter(ExtractorType.TIME_SERIES, verbose=True)
 
@@ -110,8 +112,7 @@ class EconomicIndicatorsExtractor:
                     "note": "Full response truncated due to size"
                 }
                 return json.dumps(summary)
-            else:
-                return json.dumps(response_data)
+            return json.dumps(response_data)
         except (TypeError, ValueError, MemoryError) as e:
             # If JSON serialization fails, store error info
             error_summary = {
@@ -128,7 +129,7 @@ class EconomicIndicatorsExtractor:
             # Create economic_indicators table in source schema
             create_table_sql = """
                 CREATE SCHEMA IF NOT EXISTS source;
-                
+
                 CREATE TABLE IF NOT EXISTS source.economic_indicators (
                     economic_indicator_id BIGSERIAL PRIMARY KEY,
                     indicator_name VARCHAR(100) NOT NULL,
@@ -148,24 +149,24 @@ class EconomicIndicatorsExtractor:
                     UNIQUE(indicator_name, function_name, maturity, date, interval)
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_economic_indicators_name 
+                CREATE INDEX IF NOT EXISTS idx_economic_indicators_name
                     ON source.economic_indicators(indicator_name);
-                CREATE INDEX IF NOT EXISTS idx_economic_indicators_date 
+                CREATE INDEX IF NOT EXISTS idx_economic_indicators_date
                     ON source.economic_indicators(date);
-                CREATE INDEX IF NOT EXISTS idx_economic_indicators_status 
+                CREATE INDEX IF NOT EXISTS idx_economic_indicators_status
                     ON source.economic_indicators(api_response_status);
-                CREATE INDEX IF NOT EXISTS idx_economic_indicators_hash 
+                CREATE INDEX IF NOT EXISTS idx_economic_indicators_hash
                     ON source.economic_indicators(content_hash);
-                CREATE INDEX IF NOT EXISTS idx_economic_indicators_run_id 
+                CREATE INDEX IF NOT EXISTS idx_economic_indicators_run_id
                     ON source.economic_indicators(run_id);
             """
             db.execute_query(create_table_sql)
             print("✓ Source schema tables ensured")
 
-    def _extract_indicator_data(self, function_key: str) -> tuple[Optional[pd.DataFrame], str, str, dict]:
+    def _extract_indicator_data(self, function_key: str) -> tuple[pd.DataFrame | None, str, str, dict]:
         """
         Extract data for a single economic indicator from Alpha Vantage API.
-        
+
         Returns:
             tuple: (dataframe, status, message, raw_response)
         """
@@ -193,10 +194,10 @@ class EconomicIndicatorsExtractor:
 
         try:
             print(f"Extracting {display_name} data...")
-            
+
             # Wait with adaptive rate limiting
             self.rate_limiter.pre_api_call()
-            
+
             response = requests.get(self.base_url, params=params)
             response.raise_for_status()
 
@@ -273,17 +274,17 @@ class EconomicIndicatorsExtractor:
             self.rate_limiter.post_api_call('error')
             return None, "error", error_msg, {}
 
-    def _prepare_records_for_insertion(self, df: pd.DataFrame, raw_response: dict, run_id: str) -> List[tuple]:
+    def _prepare_records_for_insertion(self, df: pd.DataFrame, raw_response: dict, run_id: str) -> list[tuple]:
         """Prepare DataFrame records for database insertion with content hashing."""
         if df is None or df.empty:
             return []
 
         records = []
-        
+
         # Store raw API response as JSONB
         # Convert NaN values to None for JSON serialization
         response_for_json = json.loads(json.dumps(raw_response, default=str))
-        
+
         for _, row in df.iterrows():
             # Create deterministic content for hashing
             # Include all the data fields that matter for change detection
@@ -298,14 +299,14 @@ class EconomicIndicatorsExtractor:
                 'name': row['name'],
                 'api_response_status': row['api_response_status'],
             }
-            
+
             # Generate content hash
             content_hash = self.content_hasher.calculate_business_content_hash(content_data)
-            
+
             # Handle NaN values for database insertion
             value = None if pd.isna(row['value']) else float(row['value'])
             date_val = None if pd.isna(row['date']) else row['date']
-            
+
             record = (
                 row['indicator_name'],
                 row['function_name'],
@@ -324,7 +325,7 @@ class EconomicIndicatorsExtractor:
 
         return records
 
-    def _upsert_records(self, db, records: List[tuple]) -> int:
+    def _upsert_records(self, db, records: list[tuple]) -> int:
         """Insert or update records using content hash for deduplication."""
         if not records:
             return 0
@@ -332,13 +333,13 @@ class EconomicIndicatorsExtractor:
         # For large datasets, check existing hashes first to avoid unnecessary upserts
         if len(records) > 1000:
             return self._upsert_records_optimized(db, records)
-        
+
         insert_query = """
             INSERT INTO source.economic_indicators
             (indicator_name, function_name, maturity, date, interval, unit, value, name,
              api_response, api_response_status, run_id, content_hash)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (indicator_name, date, content_hash) 
+            ON CONFLICT (indicator_name, date, content_hash)
             DO UPDATE SET
                 unit = EXCLUDED.unit,
                 value = EXCLUDED.value,
@@ -352,59 +353,59 @@ class EconomicIndicatorsExtractor:
 
         return db.execute_many(insert_query, records)
 
-    def _upsert_records_optimized(self, db, records: List[tuple]) -> int:
+    def _upsert_records_optimized(self, db, records: list[tuple]) -> int:
         """Optimized upsert for large datasets - check existing data first."""
         print(f"  Optimizing upsert for {len(records):,} records...")
-        
+
         # For very large datasets, check if this indicator already exists
         if records:
             sample_record = records[0]
             indicator_name = sample_record[0]
-            function_name = sample_record[1] 
+            function_name = sample_record[1]
             maturity = sample_record[2]
             interval = sample_record[4]
-            
+
             # Quick check: do we have any existing data for this exact indicator?
             count_query = """
-                SELECT COUNT(*) FROM source.economic_indicators 
-                WHERE indicator_name = %s AND function_name = %s 
+                SELECT COUNT(*) FROM source.economic_indicators
+                WHERE indicator_name = %s AND function_name = %s
                 AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
                 AND interval = %s
             """
             existing_count = db.fetch_query(count_query, (indicator_name, function_name, maturity, maturity, interval))
             existing_count = existing_count[0][0] if existing_count else 0
-            
+
             print(f"  Found {existing_count:,} existing records for {indicator_name}")
-            
+
             # If we have roughly the same amount of data, assume it's the same and skip
             if existing_count > 0 and abs(existing_count - len(records)) < 100:
                 print(f"  Skipping {len(records):,} records (data appears current)")
                 return 0
-        
+
         # If we get here, we need to do the upsert
         # For very large datasets, batch the operations
         batch_size = 5000
         total_inserted = 0
-        
+
         for i in range(0, len(records), batch_size):
             batch = records[i:i + batch_size]
             print(f"  Processing batch {i//batch_size + 1}/{(len(records) + batch_size - 1)//batch_size} ({len(batch):,} records)")
-            
+
             insert_query = """
                 INSERT INTO source.economic_indicators
                 (indicator_name, function_name, maturity, date, interval, unit, value, name,
                  api_response, api_response_status, run_id, content_hash)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (indicator_name, date, content_hash) 
+                ON CONFLICT (indicator_name, date, content_hash)
                 DO NOTHING
             """
-            
+
             batch_inserted = db.execute_many(insert_query, batch)
             total_inserted += batch_inserted
-            
+
         return total_inserted
 
-    def _record_status_only(self, db, indicator_name: str, function_name: str, maturity: str, 
+    def _record_status_only(self, db, indicator_name: str, function_name: str, maturity: str,
                            interval: str, status: str, message: str, raw_response: dict, run_id: str):
         """Record extraction status (empty/error) without data."""
         # Create content hash for status record
@@ -417,7 +418,7 @@ class EconomicIndicatorsExtractor:
             'message': message,
         }
         content_hash = self.content_hasher.calculate_business_content_hash(content_data)
-        
+
         # Convert raw response for JSON storage
         response_for_json = json.loads(json.dumps(raw_response, default=str))
 
@@ -448,7 +449,7 @@ class EconomicIndicatorsExtractor:
 
         db.execute_query(
             insert_query,
-            (indicator_name, function_name, maturity, interval, message, 
+            (indicator_name, function_name, maturity, interval, message,
              json.dumps(response_for_json), status, run_id, content_hash),
         )
         print(f"Recorded {status} status for {indicator_name}")
@@ -460,9 +461,9 @@ class EconomicIndicatorsExtractor:
 
         interval, display_name, maturity = ECONOMIC_INDICATOR_CONFIGS[function_key]
         actual_function = function_key if not function_key.startswith("TREASURY_YIELD_") else "TREASURY_YIELD"
-        
+
         run_id = self.run_id_generator.generate()
-        
+
         # Extract data
         df, status, message, raw_response = self._extract_indicator_data(function_key)
 
@@ -473,43 +474,43 @@ class EconomicIndicatorsExtractor:
                 # Prepare and insert data records
                 records = self._prepare_records_for_insertion(df, raw_response, run_id)
                 inserted_count = self._upsert_records(db, records)
-                
+
                 # Log summary
                 total_records = len(records)
                 updated_count = total_records - inserted_count
                 print(f"✓ {display_name}: {inserted_count} new, {updated_count} updated ({total_records} total)")
-                
+
             else:
                 # Record status without data
                 self._record_status_only(
-                    db, display_name, actual_function, maturity, interval, 
+                    db, display_name, actual_function, maturity, interval,
                     status, message, raw_response, run_id
                 )
-        
+
         return inserted_count, status
 
-    def extract_batch(self, indicator_list: Optional[List[str]] = None, 
-                     batch_size: int = 5) -> Dict[str, Any]:
+    def extract_batch(self, indicator_list: list[str] | None = None,
+                     batch_size: int = 5) -> dict[str, Any]:
         """
         Extract multiple economic indicators with batch processing and rate limiting.
-        
+
         Args:
             indicator_list: List of indicator function keys to extract (None = all)
             batch_size: Number of indicators to process before pausing
-            
+
         Returns:
             Dict with extraction summary
         """
         # Ensure schema exists
         self._ensure_source_schema()
-        
+
         if indicator_list is None:
             indicator_list = list(ECONOMIC_INDICATOR_CONFIGS.keys())
 
         print(f"Starting economic indicators extraction for {len(indicator_list)} indicators...")
         print(f"Batch size: {batch_size}")
         print("-" * 60)
-        
+
         # Initialize adaptive rate limiting
         self.rate_limiter.start_processing()
 
@@ -517,7 +518,7 @@ class EconomicIndicatorsExtractor:
         total_inserted = 0
         status_summary = {"success": 0, "empty": 0, "error": 0}
         start_time = datetime.now()
-        
+
         for i, function_key in enumerate(indicator_list):
             if function_key not in ECONOMIC_INDICATOR_CONFIGS:
                 print(f"⚠ Unknown indicator: {function_key}")
@@ -562,62 +563,62 @@ class EconomicIndicatorsExtractor:
     def _should_skip_api_call(self, function_key: str) -> bool:
         """
         Check if we should skip the API call for this indicator based on existing data.
-        
+
         Args:
             function_key: The function key for the indicator
-            
+
         Returns:
             bool: True if we should skip the API call
         """
         try:
             interval, display_name, maturity = ECONOMIC_INDICATOR_CONFIGS[function_key]
-            
+
             # Only skip daily indicators (API calls are expensive and daily data is frequent)
             if interval != "daily":
                 return False
-                
+
             db_manager = PostgresDatabaseManager()
             with db_manager as db:
                 # Check when we last got data for this indicator
                 query = """
                     SELECT MAX(date) as latest_date, COUNT(*) as record_count
-                    FROM source.economic_indicators 
+                    FROM source.economic_indicators
                     WHERE function_name = %s
                 """
                 result = db.fetch_query(query, (function_key,))
-                
+
                 if not result:
                     return False
-                    
+
                 latest_date, record_count = result[0]
-                
+
                 if not latest_date or record_count == 0:
                     return False
-                
+
                 # For daily indicators, skip if we have data within the last 3 days
-                from datetime import datetime, timedelta
+                from datetime import datetime
                 if isinstance(latest_date, str):
                     latest_date = datetime.strptime(latest_date, '%Y-%m-%d').date()
-                
+
                 days_since_latest = (datetime.now().date() - latest_date).days
-                
+
                 if days_since_latest <= 3:
                     print(f"  Latest data: {latest_date} ({days_since_latest} days old, {record_count:,} records)")
                     return True
-                    
+
                 return False
-                
+
         except Exception as e:
             print(f"Error checking if should skip API call for {function_key}: {e}")
             return False
         """Check if we should skip the API call for this indicator based on recent data."""
         interval, display_name, maturity = ECONOMIC_INDICATOR_CONFIGS[function_key]
         actual_function = function_key if not function_key.startswith("TREASURY_YIELD_") else "TREASURY_YIELD"
-        
+
         # Only check for daily indicators with large datasets to avoid unnecessary API calls
         if interval != "daily":
             return False
-            
+
         try:
             db_manager = PostgresDatabaseManager()
             with db_manager as db:
@@ -625,24 +626,24 @@ class EconomicIndicatorsExtractor:
                 recent_check_query = """
                     SELECT COUNT(*), MAX(date) as latest_date
                     FROM source.economic_indicators
-                    WHERE indicator_name = %s AND function_name = %s 
+                    WHERE indicator_name = %s AND function_name = %s
                     AND (maturity = %s OR (maturity IS NULL AND %s IS NULL))
                     AND interval = %s
                     AND date >= CURRENT_DATE - INTERVAL '3 days'
                 """
-                
-                result = db.fetch_query(recent_check_query, 
+
+                result = db.fetch_query(recent_check_query,
                     (display_name, actual_function, maturity, maturity, interval))
-                
+
                 if result and result[0][0] > 0:
                     recent_count, latest_date = result[0]
                     print(f"  Found recent data for {display_name}: {recent_count} records, latest: {latest_date}")
                     return True
-                    
+
         except Exception as e:
             print(f"  Error checking recent data: {e}")
             return False
-            
+
         return False
 
     def _extract_indicator_with_fresh_connection(self, function_key: str) -> tuple[int, str]:
@@ -652,46 +653,46 @@ class EconomicIndicatorsExtractor:
 
         interval, display_name, maturity = ECONOMIC_INDICATOR_CONFIGS[function_key]
         actual_function = function_key if not function_key.startswith("TREASURY_YIELD_") else "TREASURY_YIELD"
-        
+
         # Check if we should skip the API call for this indicator
         if self._should_skip_api_call(function_key):
             print(f"✓ {display_name}: Skipped (recent data already exists)")
             return 0, "success"
-        
+
         run_id = self.run_id_generator.generate()
-        
+
         # Extract data
         df, status, message, raw_response = self._extract_indicator_data(function_key)
 
         # Process data with fresh database connection
         inserted_count = 0
         db_manager = PostgresDatabaseManager()
-        
+
         with db_manager as db:
             if status == "success" and df is not None:
                 # Prepare and insert data records
                 records = self._prepare_records_for_insertion(df, raw_response, run_id)
                 inserted_count = self._upsert_records(db, records)
-                
+
                 # Log summary
                 total_records = len(records)
                 updated_count = total_records - inserted_count
                 print(f"✓ {display_name}: {inserted_count} new, {updated_count} updated ({total_records} total)")
-                
+
             else:
                 # Record status without data
                 self._record_status_only(
-                    db, display_name, actual_function, maturity, interval, 
+                    db, display_name, actual_function, maturity, interval,
                     status, message, raw_response, run_id
                 )
-        
+
         return inserted_count, status
 
-    def get_database_summary(self) -> Dict[str, Any]:
+    def get_database_summary(self) -> dict[str, Any]:
         """Get comprehensive summary of economic indicators data in the database."""
         # Use a fresh database connection for summary
         db_manager = PostgresDatabaseManager()
-        
+
         with db_manager as db:
             # Total records by status
             status_query = """
@@ -704,7 +705,7 @@ class EconomicIndicatorsExtractor:
 
             # Data records by indicator
             indicator_query = """
-                SELECT indicator_name, interval, COUNT(*) as count, 
+                SELECT indicator_name, interval, COUNT(*) as count,
                        MIN(date) as earliest, MAX(date) as latest
                 FROM source.economic_indicators
                 WHERE api_response_status = 'success' AND date IS NOT NULL
@@ -725,7 +726,7 @@ class EconomicIndicatorsExtractor:
                 ) e2 ON e1.indicator_name = e2.indicator_name
                      AND e1.function_name = e2.function_name
                      AND (e1.maturity = e2.maturity OR (e1.maturity IS NULL AND e2.maturity IS NULL))
-                     AND e1.interval = e2.interval 
+                     AND e1.interval = e2.interval
                      AND e1.date = e2.max_date
                 ORDER BY e1.indicator_name, e1.interval
             """
@@ -778,19 +779,19 @@ def main():
     """Command-line interface for economic indicators extraction."""
     parser = argparse.ArgumentParser(description="Extract economic indicators data from Alpha Vantage API")
     parser.add_argument(
-        "--indicators", 
-        nargs="+", 
+        "--indicators",
+        nargs="+",
         choices=list(ECONOMIC_INDICATOR_CONFIGS.keys()),
         help="Specific indicators to extract (default: all)"
     )
     parser.add_argument(
-        "--batch-size", 
-        type=int, 
+        "--batch-size",
+        type=int,
         default=5,
         help="Number of indicators to process per batch (default: 5)"
     )
     parser.add_argument(
-        "--summary", 
+        "--summary",
         action="store_true",
         help="Show database summary after extraction"
     )
@@ -799,18 +800,18 @@ def main():
 
     try:
         extractor = EconomicIndicatorsExtractor()
-        
+
         # Run extraction
         if args.indicators:
             print(f"Extracting specific indicators: {', '.join(args.indicators)}")
         else:
             print("Extracting all configured indicators")
-            
-        result = extractor.extract_batch(
+
+        extractor.extract_batch(
             indicator_list=args.indicators,
             batch_size=args.batch_size
         )
-        
+
         # Show summary if requested
         if args.summary:
             print("\n" + "="*50)

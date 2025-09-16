@@ -2,10 +2,9 @@
 Extract company overview data from Alpha Vantage API and load into database.
 """
 
-import os
 import argparse
+import os
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 
@@ -163,7 +162,7 @@ class OverviewExtractor:
             }
 
         # Map API fields to database columns
-        transformed = {
+        return {
             "symbol_id": symbol_id,
             "symbol": data.get("Symbol", symbol),
             "assettype": data.get("AssetType"),
@@ -183,7 +182,6 @@ class OverviewExtractor:
             "updated_at": current_timestamp,
         }
 
-        return transformed
 
     def load_overview_data_with_db(self, db_manager, records):
         """Load overview records into the database using provided database manager."""
@@ -226,35 +224,35 @@ class OverviewExtractor:
 
         # Get the first record to determine columns
         first_record = records[0]
-        columns = [col for col in first_record.keys() if col not in ['created_at', 'updated_at']]
-        
+        columns = [col for col in first_record if col not in ['created_at', 'updated_at']]
+
         # Build the INSERT query
         placeholders = ", ".join(["%s" for _ in columns])
-        
+
         insert_query = f"""
-            INSERT INTO overview ({', '.join(columns)}, created_at, updated_at) 
+            INSERT INTO overview ({', '.join(columns)}, created_at, updated_at)
             VALUES ({placeholders}, NOW(), NOW())
         """
-        
+
         # Prepare record values (excluding timestamp columns)
         record_values = []
         for record in records:
             values = [record[col] for col in columns]
             record_values.append(tuple(values))
-        
+
         # Execute the insert
         try:
             with db_manager.connection.cursor() as cursor:
                 cursor.executemany(insert_query, record_values)
                 db_manager.connection.commit()
                 rows_affected = cursor.rowcount
-                
+
             print(f"Successfully loaded {rows_affected} records into overview table")
-            
+
         except Exception as e:
             db_manager.connection.rollback()
             if "duplicate key" in str(e).lower():
-                print(f"Duplicate key detected, skipping")
+                print("Duplicate key detected, skipping")
             else:
                 raise Exception(f"Database error loading overview records: {str(e)}")
 
@@ -318,7 +316,7 @@ class OverviewExtractor:
 
                 records = []
 
-                for i, symbol in enumerate(symbols):
+                for _i, symbol in enumerate(symbols):
                     symbol_id = symbol_mapping[symbol]
 
                     # Extract data for this symbol
@@ -475,10 +473,10 @@ def main():
             for ex in exchanges:
                 remaining = db.fetch_query(
                     """
-                    SELECT COUNT(*) 
-                    FROM listing_status ls 
-                    LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id 
-                    WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL 
+                    SELECT COUNT(*)
+                    FROM listing_status ls
+                    LEFT JOIN overview ov ON ls.symbol_id = ov.symbol_id
+                    WHERE ls.asset_type = 'Stock' AND ov.symbol_id IS NULL
                     AND ls.exchange = %s
                 """,
                     (ex,),

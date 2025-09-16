@@ -19,13 +19,11 @@ class DatabaseManager:
         self.connection = sqlite3.connect(str(self.db_path))
         # Enable foreign key constraints
         self.connection.execute("PRAGMA foreign_keys = ON")
-        print(f"Connected to database at {self.db_path}")
 
     def close(self):
         """Close the database connection."""
         if self.connection:
             self.connection.close()
-            print("Database connection closed.")
 
     def execute_query(self, query, params=None):
         """Execute a query against the database."""
@@ -39,7 +37,6 @@ class DatabaseManager:
             cursor.execute(query)
 
         self.connection.commit()
-        print(f"Executed query: {query[:50]}...")
 
         return cursor.fetchall()
 
@@ -51,7 +48,6 @@ class DatabaseManager:
         cursor = self.connection.cursor()
         cursor.executemany(query, params_list)
         self.connection.commit()
-        print(f"Executed batch query: {query[:50]}... with {len(params_list)} records")
 
         return cursor.rowcount
 
@@ -84,7 +80,7 @@ class DatabaseManager:
         if not schema_path.exists():
             raise FileNotFoundError(f"Schema file not found: {schema_path}")
 
-        with open(schema_path) as file:
+        with schema_path.open() as file:
             schema_sql = file.read()
 
         # Split the SQL file into individual statements and execute them
@@ -95,7 +91,6 @@ class DatabaseManager:
                 self.connection.execute(statement)
 
         self.connection.commit()
-        print(f"Database schema initialized from {schema_path}")
 
     def table_exists(self, table_name):
         """Check if a table exists in the database."""
@@ -105,7 +100,7 @@ class DatabaseManager:
         cursor = self.connection.cursor()
         cursor.execute(
             """
-            SELECT name FROM sqlite_master 
+            SELECT name FROM sqlite_master
             WHERE type='table' AND name=?
         """,
             (table_name,),

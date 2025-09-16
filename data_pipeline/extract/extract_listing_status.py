@@ -15,16 +15,20 @@ from dotenv import load_dotenv
 # Add the parent directories to the path so we can import from db
 sys.path.append(str(Path(__file__).parent.parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+from utils.adaptive_rate_limiter import (  # -----------------------------------------------------------------------------
+    AdaptiveRateLimiter,
+    ExtractorType,
+)
 from utils.database_safety import DatabaseSafetyManager
-from utils.adaptive_rate_limiter import AdaptiveRateLimiter, ExtractorType# -----------------------------------------------------------------------------
+
 # Example commands (PowerShell):
-# 
+#
 # Incremental update (default):
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py
-# 
+#
 # Or explicitly:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py --mode update
-# 
+#
 # Full replacement:
 # & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py --mode replace
 # -----------------------------------------------------------------------------s.database_safety import DatabaseSafetyManager
@@ -37,15 +41,15 @@ class ListingStatusExtractor:
 
     def __init__(self, mode="update"):
         """Initialize the extractor with specified mode.
-        
+
         Args:
             mode (str): Operation mode - "update" for incremental updates (default), "replace" for full replacement
         """
         if mode not in ["replace", "update"]:
             raise ValueError("Mode must be 'replace' or 'update'")
-        
+
         self.mode = mode
-        
+
         # Load ALPHAVANTAGE_API_KEY from .env file
         load_dotenv()
         self.api_key = os.getenv("ALPHAVANTAGE_API_KEY")
@@ -55,8 +59,8 @@ class ListingStatusExtractor:
 
         self.db_manager = PostgresDatabaseManager()
         self.base_url = "https://www.alphavantage.co/query"
-        
-        # Initialize adaptive rate limiter for fundamentals processing  
+
+        # Initialize adaptive rate limiter for fundamentals processing
         self.rate_limiter = AdaptiveRateLimiter(ExtractorType.FUNDAMENTALS, verbose=True)
 
     def extract_data(self):
@@ -65,7 +69,7 @@ class ListingStatusExtractor:
 
         all_data = []
         states = ['active', 'delisted']
-        
+
         for state in states:
             print(f"Extracting {state} stocks...")
             url = f"{self.base_url}?function={STOCK_API_FUNCTION}&state={state}&apikey={self.api_key}"
@@ -79,13 +83,13 @@ class ListingStatusExtractor:
 
                 # Read CSV data directly from the response
                 df = pd.read_csv(url)
-                
+
                 # Add state column to track which API call this data came from
                 df['api_state'] = state
-                
+
                 print(f"Successfully extracted {len(df)} {state} records")
                 all_data.append(df)
-                
+
                 # Notify rate limiter of successful API call
                 self.rate_limiter.post_api_call('success')
 
@@ -103,7 +107,7 @@ class ListingStatusExtractor:
 
         if not all_data:
             raise Exception("No data received from any API calls")
-        
+
         # Combine all dataframes
         combined_df = pd.concat(all_data, ignore_index=True)
         print(f"Successfully extracted {len(combined_df)} total records")
@@ -148,7 +152,7 @@ class ListingStatusExtractor:
                 )
                 df_transformed[col] = df_transformed[col].dt.strftime("%Y-%m-%d")
                 df_transformed[col] = df_transformed[col].where(
-                    pd.notnull(df_transformed[col]), None
+                    pd.notna(df_transformed[col]), None
                 )
 
         # Add timestamp columns
@@ -159,7 +163,7 @@ class ListingStatusExtractor:
         # Select only columns that exist in our database schema
         required_columns = [
             "symbol",
-            "name", 
+            "name",
             "exchange",
             "asset_type",
             "ipo_date",
@@ -179,7 +183,7 @@ class ListingStatusExtractor:
         # First check for duplicates
         initial_count = len(df_transformed)
         duplicate_symbols = df_transformed[df_transformed.duplicated(subset=['symbol'], keep=False)]
-        
+
         if len(duplicate_symbols) > 0:
             print(f"Found {len(duplicate_symbols)} duplicate symbol entries")
             # Use api_state for sorting since it's more reliable than status for this purpose
@@ -195,14 +199,14 @@ class ListingStatusExtractor:
         else:
             df_deduped = df_transformed
             print("No duplicate symbols found")
-        
+
         # Now select only the required columns
         df_final = df_deduped[available_columns]
-        
+
         # Sort by symbol to ensure consistent ordering in the database
         df_final = df_final.sort_values('symbol')
-        print(f"✅ Data sorted by symbol for consistent database ordering")
-        
+        print("✅ Data sorted by symbol for consistent database ordering")
+
         # Final check for duplicates
         final_duplicates = df_final[df_final.duplicated(subset=['symbol'])]
         if len(final_duplicates) > 0:
@@ -211,15 +215,14 @@ class ListingStatusExtractor:
 
         print(f"Transformed data with columns: {list(df_final.columns)}")
         print(f"Final record count: {len(df_final)}")
-        print(f"✅ Status column captures active/delisted state information")
+        print("✅ Status column captures active/delisted state information")
         return df_final
 
     def load_data(self, df):
         """Load transformed data into the database using the specified mode."""
         if self.mode == "update":
             return self._load_data_update(df)
-        else:
-            return self._load_data_replace(df)
+        return self._load_data_replace(df)
 
     def _load_data_replace(self, df):
         """Load transformed data into the database, replacing all existing records."""
@@ -232,14 +235,14 @@ class ListingStatusExtractor:
             # Check if the table exists in the extracted schema
             table_exists_query = """
                 SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'extracted' 
+                    SELECT FROM information_schema.tables
+                    WHERE table_schema = 'extracted'
                     AND table_name = 'listing_status'
                 );
             """
             result = db.fetch_query(table_exists_query)
             table_exists = result[0][0] if result else False
-            
+
             if not table_exists:
                 print("Table extracted.listing_status does not exist!")
                 print("Please run the schema initialization first or check your database setup.")
@@ -248,11 +251,11 @@ class ListingStatusExtractor:
             # SAFE data replacement using safety manager - with CASCADE protection
             print("🛡️ Performing SAFE data replacement...")
             print("⚠️ WARNING: This will replace all listing_status data while preserving symbol_id relationships")
-            
+
             # Check if there are dependent records
             safety_manager = DatabaseSafetyManager(enable_backups=True, enable_checks=True)
             has_dependents = not safety_manager.verify_no_cascade_risk('listing_status')
-            
+
             if has_dependents:
                 print("🔄 Using UPSERT strategy to preserve symbol_id relationships...")
                 # Use UPSERT approach instead of DELETE to preserve foreign key relationships
@@ -262,7 +265,7 @@ class ListingStatusExtractor:
                 if not safety_manager.safe_delete_table_data('listing_status', 'listing_status_replace'):
                     raise Exception("Safe deletion failed - operation aborted")
                 self._perform_insert_replacement(db, df)
-            
+
             # Verify integrity after operation
             safety_manager.verify_table_integrity('listing_status')
 
@@ -289,7 +292,7 @@ class ListingStatusExtractor:
             columns_to_compare = [
                 "name",
                 "exchange",
-                "asset_type", 
+                "asset_type",
                 "ipo_date",
                 "delisting_date",
                 "status",
@@ -340,14 +343,14 @@ class ListingStatusExtractor:
             if new_records:
                 # Sort new records by symbol to maintain alphabetical order in database
                 new_records_sorted = sorted(new_records, key=lambda x: x["symbol"])
-                
+
                 insert_cols = [
                     "symbol",
                     "name",
                     "exchange",
                     "asset_type",
                     "ipo_date",
-                    "delisting_date", 
+                    "delisting_date",
                     "status",
                     "created_at",
                     "updated_at",
@@ -407,7 +410,7 @@ class ListingStatusExtractor:
     def _perform_upsert_replacement(self, db, df):
         """Replace data using UPSERT to preserve existing symbol_id values."""
         print("🔄 Performing UPSERT-based replacement (preserves symbol_id relationships)...")
-        
+
         # Get existing symbol -> symbol_id mapping
         existing_mapping = {}
         try:
@@ -416,22 +419,22 @@ class ListingStatusExtractor:
             print(f"📊 Found {len(existing_mapping)} existing symbols with preserved IDs")
         except Exception as e:
             print(f"⚠️ Could not fetch existing mapping: {e}")
-        
+
         # Track statistics
         preserved_ids = 0
         new_symbols = 0
         updated_symbols = 0
-        
+
         # Process each record with UPSERT
-        for index, row in df.iterrows():
+        for _index, row in df.iterrows():
             symbol = row['symbol']
             data_dict = row.to_dict()
-            
+
             # Convert NaN values to None
             for key, value in data_dict.items():
                 if pd.isna(value):
                     data_dict[key] = None
-            
+
             if symbol in existing_mapping:
                 # Preserve existing symbol_id
                 data_dict['symbol_id'] = existing_mapping[symbol]
@@ -442,15 +445,15 @@ class ListingStatusExtractor:
                 if 'symbol_id' in data_dict:
                     del data_dict['symbol_id']  # Let database auto-generate
                 new_symbols += 1
-            
+
             # Perform UPSERT
             try:
                 if symbol in existing_mapping:
                     # Update existing record
-                    update_cols = [col for col in data_dict.keys() if col != 'symbol_id']
+                    update_cols = [col for col in data_dict if col != 'symbol_id']
                     update_set = ', '.join([f"{col} = %s" for col in update_cols])
                     update_query = f"""
-                        UPDATE extracted.listing_status 
+                        UPDATE extracted.listing_status
                         SET {update_set}
                         WHERE symbol_id = %s
                     """
@@ -466,23 +469,23 @@ class ListingStatusExtractor:
                     """
                     insert_values = [data_dict[col] for col in insert_cols]
                     db.execute_query(insert_query, insert_values)
-                    
+
             except Exception as e:
                 print(f"❌ Error upserting {symbol}: {e}")
                 raise
-        
+
         # Remove symbols that are no longer in the new data
         if existing_mapping:
             new_symbols_set = set(df['symbol'].tolist())
             symbols_to_remove = set(existing_mapping.keys()) - new_symbols_set
-            
+
             if symbols_to_remove:
                 print(f"🗑️ Removing {len(symbols_to_remove)} symbols no longer in source data...")
                 for symbol in symbols_to_remove:
                     symbol_id = existing_mapping[symbol]
                     db.execute_query("DELETE FROM extracted.listing_status WHERE symbol_id = %s", [symbol_id])
-        
-        print(f"✅ UPSERT replacement completed:")
+
+        print("✅ UPSERT replacement completed:")
         print(f"   - Preserved symbol_id relationships: {preserved_ids}")
         print(f"   - New symbols added: {new_symbols}")
         print(f"   - Existing symbols updated: {updated_symbols}")
@@ -491,16 +494,16 @@ class ListingStatusExtractor:
     def _perform_insert_replacement(self, db, df):
         """Replace data using INSERT after DELETE (when no foreign key dependencies exist)."""
         print("📥 Performing INSERT-based replacement (no foreign key dependencies)...")
-        
+
         # Reset the sequence for symbol_id if it exists
         try:
             db.execute_query("ALTER SEQUENCE IF EXISTS extracted.listing_status_symbol_id_seq RESTART WITH 1;")
         except Exception as e:
             print(f"Note: Could not reset sequence (this is normal if no sequence exists): {e}")
-        
+
         # Prepare data for batch insert
         records = []
-        for index, row in df.iterrows():
+        for _index, row in df.iterrows():
             data_dict = row.to_dict()
             # Convert NaN values to None for proper NULL handling
             for key, value in data_dict.items():
@@ -514,21 +517,21 @@ class ListingStatusExtractor:
             columns = list(records[0].keys())
             placeholders = ', '.join(['%s'] * len(columns))
             columns_str = ', '.join(columns)
-            
+
             insert_query = f"""
                 INSERT INTO extracted.listing_status ({columns_str})
                 VALUES ({placeholders})
             """
-            
+
             # Prepare data for batch insert (maintains symbol order from DataFrame)
             data_to_insert = []
             for record in records:
                 row_values = [record[col] for col in columns]
                 data_to_insert.append(row_values)
-            
+
             # Execute batch insert
             db.execute_many(insert_query, data_to_insert)
-            
+
         print(f"✅ Successfully replaced all records with {len(df)} new records in listing_status table (ordered by symbol)")
 
     def run_etl(self):
@@ -569,13 +572,13 @@ def main():
         action="store_true",
         help="Show what would be done without making changes (future enhancement)"
     )
-    
+
     args = parser.parse_args()
-    
+
     if args.dry_run:
         print("⚠️ Dry-run mode is not yet implemented")
         return
-    
+
     print(f"🚀 Starting in {args.mode.upper()} mode")
     extractor = ListingStatusExtractor(mode=args.mode)
     extractor.run_etl()
@@ -586,12 +589,12 @@ if __name__ == "__main__":
 
 # ----------------------------------------------------------------------------
 # Example commands (PowerShell):
-# 
+#
 # Incremental update (default):
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py 
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py
 # --mode update
-# 
+#
 # Or explicitly:
-# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py 
+# & .\.venv\Scripts\python.exe data_pipeline\extract\extract_listing_status.py
 # --mode replace
 # -----------------------------------------------------------------------------
