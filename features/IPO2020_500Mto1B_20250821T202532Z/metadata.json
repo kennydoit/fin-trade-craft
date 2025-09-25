@@ -1,0 +1,106 @@
+{
+  "created_at": "2025-09-18T07:41:48.601210",
+  "config": {
+    "universe": "IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income",
+    "folder": "IPO2020_500Mto1B_20250821T202532Z",
+    "model_file_granularity": "daily",
+    "collection_dates": {
+      "start_date": "2020-01-01",
+      "end_date": "2025-07-31"
+    },
+    "data_switches": {
+      "fundamentals": {
+        "balance_sheet": {
+          "enabled": true,
+          "offset": 45
+        },
+        "cash_flow": {
+          "enabled": true,
+          "offset": 45
+        },
+        "income_statement": {
+          "enabled": true,
+          "offset": 45
+        },
+        "earnings_call_transcripts": {
+          "enabled": true,
+          "offset": 45
+        },
+        "insider_transactions": {
+          "enabled": true,
+          "offset": 5
+        }
+      },
+      "fred": {
+        "commodities": true,
+        "economic_indicators": true
+      },
+      "ohlcv": {
+        "time_series_daily_adjusted": true
+      }
+    },
+    "export": {
+      "ml_features": true,
+      "formats": {
+        "parquet": true
+      }
+    }
+  },
+  "export_results": {
+    "fundamentals": {
+      "status": "success",
+      "file": "C:\\Users\\Kenrm\\repositories\\fin-trade-craft\\features\\IPO2020_500Mto1B_20250821T202532Z\\fundamentals_features.parquet",
+      "records": 9349,
+      "feature_counts": {
+        "balance_sheet_features": 100,
+        "cash_flow_features": 20,
+        "income_statement_features": 62
+      },
+      "total_features": 182,
+      "date_range": [
+        "2020-01-31",
+        "2025-06-30"
+      ]
+    },
+    "macro": {
+      "status": "success",
+      "file": "C:\\Users\\Kenrm\\repositories\\fin-trade-craft\\features\\IPO2020_500Mto1B_20250821T202532Z\\macro_features.parquet",
+      "records": 2039,
+      "feature_counts": {
+        "economic_indicators": 85,
+        "commodities": 159
+      },
+      "total_features": 244,
+      "date_range": [
+        "2020-01-01",
+        "2025-07-31"
+      ]
+    }
+  },
+  "feature_categories": {
+    "fundamentals": {
+      "description": "Company financial metrics with universe filtering",
+      "frequency": "Quarterly (fiscal_date_ending)",
+      "features": {
+        "balance_sheet_features": 100,
+        "cash_flow_features": 20,
+        "income_statement_features": 62
+      }
+    },
+    "macro": {
+      "description": "Macroeconomic indicators and commodity prices",
+      "frequency": "Daily",
+      "features": {
+        "economic_indicators": 85,
+        "commodities": 159
+      }
+    }
+  },
+  "usage_examples": {
+    "python": {
+      "load_fundamentals": "df = pd.read_parquet('fundamentals_features.parquet')",
+      "load_macro": "df = pd.read_parquet('macro_features.parquet')",
+      "feature_selection": "features = [col for col in df.columns if col.startswith('fred_')]"
+    }
+  }
+}

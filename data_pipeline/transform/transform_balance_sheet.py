@@ -21,8 +21,9 @@ from db.postgres_database_manager import PostgresDatabaseManager
 class BalanceSheetTransformer:
     """Create analytical features from balance sheet information."""
 
-    def __init__(self) -> None:
+    def __init__(self, universe_id: str | None = None) -> None:
         self.db = PostgresDatabaseManager()
+        self.universe_id = universe_id
         self.rolling_window = 4  # Quarterly data
         self.epsilon = 1e-6  # For safe division
 
@@ -30,46 +31,94 @@ class BalanceSheetTransformer:
     # Data fetching helpers
     # ------------------------------------------------------------------
     def _fetch_balance_sheet(self) -> pd.DataFrame:
-        query = """
-            SELECT
-                b.symbol_id,
-                b.symbol,
-                b.fiscal_date_ending,
-                b.total_assets,
-                b.total_current_assets,
-                b.cash_and_short_term_investments,
-                b.cash_and_cash_equivalents_at_carrying_value,
-                b.current_net_receivables,
-                b.total_current_liabilities,
-                b.total_liabilities,
-                b.current_debt,
-                b.long_term_debt,
-                b.total_shareholder_equity,
-                b.retained_earnings,
-                b.treasury_stock,
-                b.goodwill,
-                b.intangible_assets,
-                b.property_plant_equipment,
-                b.common_stock_shares_outstanding
-            FROM balance_sheet b
-            WHERE b.report_type = 'quarterly'
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT
+                    b.symbol_id,
+                    b.symbol,
+                    b.fiscal_date_ending,
+                    b.total_assets,
+                    b.total_current_assets,
+                    b.cash_and_short_term_investments,
+                    b.cash_and_cash_equivalents_at_carrying_value,
+                    b.current_net_receivables,
+                    b.total_current_liabilities,
+                    b.total_liabilities,
+                    b.current_debt,
+                    b.long_term_debt,
+                    b.total_shareholder_equity,
+                    b.retained_earnings,
+                    b.treasury_stock,
+                    b.goodwill,
+                    b.intangible_assets,
+                    b.property_plant_equipment,
+                    b.common_stock_shares_outstanding
+                FROM balance_sheet b
+                INNER JOIN transformed.symbol_universes su ON b.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+                    AND b.report_type = 'quarterly'
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT
+                    b.symbol_id,
+                    b.symbol,
+                    b.fiscal_date_ending,
+                    b.total_assets,
+                    b.total_current_assets,
+                    b.cash_and_short_term_investments,
+                    b.cash_and_cash_equivalents_at_carrying_value,
+                    b.current_net_receivables,
+                    b.total_current_liabilities,
+                    b.total_liabilities,
+                    b.current_debt,
+                    b.long_term_debt,
+                    b.total_shareholder_equity,
+                    b.retained_earnings,
+                    b.treasury_stock,
+                    b.goodwill,
+                    b.intangible_assets,
+                    b.property_plant_equipment,
+                    b.common_stock_shares_outstanding
+                FROM balance_sheet b
+                WHERE b.report_type = 'quarterly'
+            """
+            return self.db.fetch_dataframe(query)
 
     def _fetch_income_statement(self) -> pd.DataFrame:
-        query = """
-            SELECT symbol, fiscal_date_ending, ebit, total_revenue
-            FROM income_statement
-            WHERE report_type = 'quarterly'
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT i.symbol, i.fiscal_date_ending, i.ebit, i.total_revenue
+                FROM income_statement i
+                INNER JOIN transformed.symbol_universes su ON i.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+                    AND i.report_type = 'quarterly'
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT symbol, fiscal_date_ending, ebit, total_revenue
+                FROM income_statement
+                WHERE report_type = 'quarterly'
+            """
+            return self.db.fetch_dataframe(query)
 
     def _fetch_overview(self) -> pd.DataFrame:
-        query = """
-            SELECT symbol, sector, industry
-            FROM extracted.overview
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT o.symbol, o.sector, o.industry
+                FROM extracted.overview o
+                INNER JOIN transformed.symbol_universes su ON o.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT symbol, sector, industry
+                FROM extracted.overview
+            """
+            return self.db.fetch_dataframe(query)
 
     # def _fetch_price_data(self) -> pd.DataFrame:
     #     query = """
@@ -351,7 +400,9 @@ class BalanceSheetTransformer:
     def run(self) -> pd.DataFrame:
         self.db.connect()
         try:
+            print(f"BalanceSheetTransformer: Processing universe_id = {self.universe_id}")  # noqa: T201
             bs_df = self._fetch_balance_sheet()
+            print(f"BalanceSheetTransformer: Fetched {len(bs_df)} balance sheet records")  # noqa: T201
             overview_df = self._fetch_overview()
             income_df = self._fetch_income_statement()
             # price_df = self._fetch_price_data()  # Disabled for balance sheet-only features

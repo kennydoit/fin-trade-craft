@@ -42,8 +42,9 @@ class IncomeStatementTransformer:
     All features are comprehensively normalized and prefixed with "fis_".
     """
 
-    def __init__(self):
+    def __init__(self, universe_id: str | None = None):
         self.db = PostgresDatabaseManager()
+        self.universe_id = universe_id
 
     def safe_divide(self, a: pd.Series, b: pd.Series, fillvalue: float = 0.0) -> pd.Series:
         """Safely divide two series, handling division by zero."""
@@ -57,39 +58,76 @@ class IncomeStatementTransformer:
 
     def _fetch_income_statement(self) -> pd.DataFrame:
         """Fetch quarterly income statement data with overview information."""
-        query = """
-            SELECT
-                ism.symbol_id,
-                ism.symbol,
-                ism.fiscal_date_ending,
-                ism.total_revenue,
-                ism.gross_profit,
-                ism.operating_income,
-                ism.net_income,
-                ism.ebit,
-                ism.ebitda,
-                ism.selling_general_and_administrative,
-                ism.research_and_development,
-                ism.operating_expenses,
-                ism.interest_expense,
-                ism.interest_and_debt_expense,
-                ism.net_interest_income,
-                ism.income_tax_expense,
-                ism.income_before_tax,
-                ism.net_income_from_continuing_operations,
-                ism.comprehensive_income_net_of_tax,
-                ism.depreciation_and_amortization,
-                ism.other_non_operating_income,
-                ov.sector,
-                ov.industry
-            FROM extracted.income_statement ism
-            LEFT JOIN extracted.overview ov ON ism.symbol = ov.symbol
-            WHERE ism.report_type = 'quarterly'
-                AND ism.fiscal_date_ending IS NOT NULL
-                AND ism.total_revenue IS NOT NULL
-            ORDER BY ism.symbol, ism.fiscal_date_ending
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT
+                    ism.symbol_id,
+                    ism.symbol,
+                    ism.fiscal_date_ending,
+                    ism.total_revenue,
+                    ism.gross_profit,
+                    ism.operating_income,
+                    ism.net_income,
+                    ism.ebit,
+                    ism.ebitda,
+                    ism.selling_general_and_administrative,
+                    ism.research_and_development,
+                    ism.operating_expenses,
+                    ism.interest_expense,
+                    ism.interest_and_debt_expense,
+                    ism.net_interest_income,
+                    ism.income_tax_expense,
+                    ism.income_before_tax,
+                    ism.net_income_from_continuing_operations,
+                    ism.comprehensive_income_net_of_tax,
+                    ism.depreciation_and_amortization,
+                    ism.other_non_operating_income,
+                    ov.sector,
+                    ov.industry
+                FROM extracted.income_statement ism
+                LEFT JOIN extracted.overview ov ON ism.symbol = ov.symbol
+                INNER JOIN transformed.symbol_universes su ON ism.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+                    AND ism.report_type = 'quarterly'
+                    AND ism.fiscal_date_ending IS NOT NULL
+                    AND ism.total_revenue IS NOT NULL
+                ORDER BY ism.symbol, ism.fiscal_date_ending
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT
+                    ism.symbol_id,
+                    ism.symbol,
+                    ism.fiscal_date_ending,
+                    ism.total_revenue,
+                    ism.gross_profit,
+                    ism.operating_income,
+                    ism.net_income,
+                    ism.ebit,
+                    ism.ebitda,
+                    ism.selling_general_and_administrative,
+                    ism.research_and_development,
+                    ism.operating_expenses,
+                    ism.interest_expense,
+                    ism.interest_and_debt_expense,
+                    ism.net_interest_income,
+                    ism.income_tax_expense,
+                    ism.income_before_tax,
+                    ism.net_income_from_continuing_operations,
+                    ism.comprehensive_income_net_of_tax,
+                    ism.depreciation_and_amortization,
+                    ism.other_non_operating_income,
+                    ov.sector,
+                    ov.industry
+                FROM extracted.income_statement ism
+                LEFT JOIN extracted.overview ov ON ism.symbol = ov.symbol
+                WHERE ism.report_type = 'quarterly'
+                    AND ism.fiscal_date_ending IS NOT NULL
+                    AND ism.total_revenue IS NOT NULL
+                ORDER BY ism.symbol, ism.fiscal_date_ending
+            """
+            return self.db.fetch_dataframe(query)
 
     def _create_core_profitability_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Create core profitability margin features."""
@@ -333,6 +371,7 @@ class IncomeStatementTransformer:
     def run(self) -> pd.DataFrame:
         """Execute the complete income statement transformation pipeline."""
         logger.info("Starting income statement transformation...")
+        print(f"IncomeStatementTransformer: Processing universe_id = {self.universe_id}")  # noqa: T201
 
         try:
             # Connect to database
@@ -340,6 +379,7 @@ class IncomeStatementTransformer:
 
             # Fetch data
             df = self._fetch_income_statement()
+            print(f"IncomeStatementTransformer: Fetched {len(df)} income statement records")  # noqa: T201
             logger.info(f"Fetched {len(df)} income statement records")
 
             if df.empty:

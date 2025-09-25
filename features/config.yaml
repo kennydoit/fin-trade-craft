@@ -2,9 +2,29 @@
 # universe: may be a UUID (universe_id) or a universe_name string present in transformed.symbol_universes
 # If you prefer to lock to a specific load, replace the universe value with the matching universe_id UUID.
 
-universe: IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income
+universe: S457601  # Current universe with 439 symbols
 
 folder: IPO2020_500Mto1B_20250821T202532Z
+
+model_file_granularity: daily
+
+# ML Export Configuration
+export_format: parquet
+output_dir: features
+include_fundamentals: true
+include_time_series: true
+create_combined: true
+
+# Time Series Feature Configuration
+rolling_window: 8
+ma_periods: [5, 10, 20, 50]
+ema_periods: [8, 21, 34, 55]
+rsi_periods: [7, 14]
+atr_periods: [10, 14]
+target_horizons: [5, 10, 20, 30, 40]
+
+dependent_variable:
+  
 
 collection_dates:
   start_date: '2020-01-01'
@@ -22,7 +42,7 @@ data_switches:
       enabled: true
       offset: 45
     earnings_call_transcripts:
-      enabled: true
+      enabled: false
       offset: 45
     insider_transactions:
       enabled: true
@@ -32,6 +52,14 @@ data_switches:
     economic_indicators: true
   ohlcv:
     time_series_daily_adjusted: true
+
+export:
+  # Export ML-ready features to optimized formats
+  ml_features: true
+  formats:
+    parquet: true          # Recommended for ML (fast, compressed, type-safe)
+    # csv: false           # Optional for debugging/inspection
+    # hdf5: false          # Alternative for very large datasets
 
 # Validation notes:
 # 1. Detect if "universe" matches UUID regex -> treat as universe_id; else treat as universe_name.

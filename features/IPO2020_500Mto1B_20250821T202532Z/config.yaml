@@ -6,6 +6,8 @@ universe: IPO_Before_2020_All_Fundamentals_GT500_OCHLV_GT1B_Net_Income
 
 folder: IPO2020_500Mto1B_20250821T202532Z
 
+model_file_granularity: daily
+
 collection_dates:
   start_date: '2020-01-01'
   end_date: '2025-07-31'
@@ -32,6 +34,14 @@ data_switches:
     economic_indicators: true
   ohlcv:
     time_series_daily_adjusted: true
+
+export:
+  # Export ML-ready features to optimized formats
+  ml_features: true
+  formats:
+    parquet: true          # Recommended for ML (fast, compressed, type-safe)
+    # csv: false           # Optional for debugging/inspection
+    # hdf5: false          # Alternative for very large datasets
 
 # Validation notes:
 # 1. Detect if "universe" matches UUID regex -> treat as universe_id; else treat as universe_name.

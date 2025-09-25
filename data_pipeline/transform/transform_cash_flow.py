@@ -21,8 +21,9 @@ from db.postgres_database_manager import PostgresDatabaseManager
 class CashFlowTransformer:
     """Create analytical features from cash flow statement information."""
 
-    def __init__(self) -> None:
+    def __init__(self, universe_id: str | None = None) -> None:
         self.db = PostgresDatabaseManager()
+        self.universe_id = universe_id
         self.epsilon = 1e-6  # Increased from 1e-9 for more robust calculations
         self.min_std_threshold = 1e-3  # Minimum std threshold for z-score calculations
         self.rolling_window = 4  # Quarterly
@@ -34,44 +35,90 @@ class CashFlowTransformer:
     # Data fetching helpers
     # ------------------------------------------------------------------
     def _fetch_cash_flow(self) -> pd.DataFrame:
-        query = """
-            SELECT
-                cf.symbol_id,
-                cf.symbol,
-                cf.fiscal_date_ending,
-                cf.operating_cashflow,
-                cf.capital_expenditures,
-                cf.cashflow_from_investment,
-                cf.cashflow_from_financing,
-                cf.change_in_cash_and_cash_equivalents,
-                cf.change_in_exchange_rate,
-                cf.proceeds_from_operating_activities,
-                cf.proceeds_from_issuance_of_long_term_debt_and_capital_securities,
-                cf.proceeds_from_issuance_of_common_stock,
-                cf.proceeds_from_issuance_of_preferred_stock,
-                cf.dividend_payout,
-                cf.payments_for_repurchase_of_common_stock
-            FROM cash_flow cf
-            WHERE cf.report_type = 'quarterly'
-                AND cf.fiscal_date_ending IS NOT NULL
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT
+                    cf.symbol_id,
+                    cf.symbol,
+                    cf.fiscal_date_ending,
+                    cf.operating_cashflow,
+                    cf.capital_expenditures,
+                    cf.cashflow_from_investment,
+                    cf.cashflow_from_financing,
+                    cf.change_in_cash_and_cash_equivalents,
+                    cf.change_in_exchange_rate,
+                    cf.proceeds_from_operating_activities,
+                    cf.proceeds_from_issuance_of_long_term_debt_and_capital_securities,
+                    cf.proceeds_from_issuance_of_common_stock,
+                    cf.proceeds_from_issuance_of_preferred_stock,
+                    cf.dividend_payout,
+                    cf.payments_for_repurchase_of_common_stock
+                FROM cash_flow cf
+                INNER JOIN transformed.symbol_universes su ON cf.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+                    AND cf.report_type = 'quarterly'
+                    AND cf.fiscal_date_ending IS NOT NULL
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT
+                    cf.symbol_id,
+                    cf.symbol,
+                    cf.fiscal_date_ending,
+                    cf.operating_cashflow,
+                    cf.capital_expenditures,
+                    cf.cashflow_from_investment,
+                    cf.cashflow_from_financing,
+                    cf.change_in_cash_and_cash_equivalents,
+                    cf.change_in_exchange_rate,
+                    cf.proceeds_from_operating_activities,
+                    cf.proceeds_from_issuance_of_long_term_debt_and_capital_securities,
+                    cf.proceeds_from_issuance_of_common_stock,
+                    cf.proceeds_from_issuance_of_preferred_stock,
+                    cf.dividend_payout,
+                    cf.payments_for_repurchase_of_common_stock
+                FROM cash_flow cf
+                WHERE cf.report_type = 'quarterly'
+                    AND cf.fiscal_date_ending IS NOT NULL
+            """
+            return self.db.fetch_dataframe(query)
 
     def _fetch_income_statement(self) -> pd.DataFrame:
-        query = """
-            SELECT symbol, fiscal_date_ending, net_income
-            FROM income_statement
-            WHERE report_type = 'quarterly'
-                AND fiscal_date_ending IS NOT NULL
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT i.symbol, i.fiscal_date_ending, i.net_income
+                FROM income_statement i
+                INNER JOIN transformed.symbol_universes su ON i.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+                    AND i.report_type = 'quarterly'
+                    AND i.fiscal_date_ending IS NOT NULL
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT symbol, fiscal_date_ending, net_income
+                FROM income_statement
+                WHERE report_type = 'quarterly'
+                    AND fiscal_date_ending IS NOT NULL
+            """
+            return self.db.fetch_dataframe(query)
 
     def _fetch_overview(self) -> pd.DataFrame:
-        query = """
-            SELECT symbol, sector, industry
-            FROM extracted.overview
-        """
-        return self.db.fetch_dataframe(query)
+        if self.universe_id:
+            query = """
+                SELECT o.symbol, o.sector, o.industry
+                FROM extracted.overview o
+                INNER JOIN transformed.symbol_universes su ON o.symbol_id = su.symbol_id
+                WHERE su.universe_id = %s
+            """
+            return self.db.fetch_dataframe(query, (self.universe_id,))
+        else:
+            query = """
+                SELECT symbol, sector, industry
+                FROM extracted.overview
+            """
+            return self.db.fetch_dataframe(query)
 
     # ------------------------------------------------------------------
     # Utility functions for normalization
@@ -426,7 +473,9 @@ class CashFlowTransformer:
     def run(self) -> pd.DataFrame:
         self.db.connect()
         try:
+            print(f"CashFlowTransformer: Processing universe_id = {self.universe_id}")  # noqa: T201
             cf_df = self._fetch_cash_flow()
+            print(f"CashFlowTransformer: Fetched {len(cf_df)} cash flow records")  # noqa: T201
             income_df = self._fetch_income_statement()
             overview_df = self._fetch_overview()
 

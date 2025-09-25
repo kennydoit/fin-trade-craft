@@ -52,17 +52,44 @@ def _apply_fundamental_transformations(
 
     # Balance Sheet
     if fundamentals.get("balance_sheet", {}).get("enabled", False):
-        transformer = BalanceSheetTransformer()
+        transformer = BalanceSheetTransformer(universe_id=universe_id)
         transformer.run()
 
     # Cash Flow
     if fundamentals.get("cash_flow", {}).get("enabled", False):
-        transformer = CashFlowTransformer()
+        transformer = CashFlowTransformer(universe_id=universe_id)
         transformer.run()
 
     # Income Statement
     if fundamentals.get("income_statement", {}).get("enabled", False):
-        transformer = IncomeStatementTransformer()
+        transformer = IncomeStatementTransformer(universe_id=universe_id)
+        transformer.run()
+
+
+def _apply_fred_transformations(
+    config: dict[str, Any], universe_id: str, output_dir: Path
+) -> None:
+    """Apply FRED data transformations based on data_switches configuration."""
+    from data_pipeline.transform.transform_economic_indicators import (
+        EconomicIndicatorsTransformer,
+    )
+    from data_pipeline.transform.transform_commodities import (
+        CommoditiesTransformer,
+    )
+
+    data_switches = config.get("data_switches", {})
+    fred = data_switches.get("fred", {})
+
+    # Economic Indicators
+    if fred.get("economic_indicators", False):
+        print("Processing economic indicators...")  # noqa: T201
+        transformer = EconomicIndicatorsTransformer()
+        transformer.run()
+
+    # Commodities
+    if fred.get("commodities", False):
+        print("Processing commodities...")  # noqa: T201
+        transformer = CommoditiesTransformer()
         transformer.run()
 
 
@@ -166,6 +193,27 @@ def main() -> None:
 
     # 5) Apply transformations based on data_switches
     _apply_fundamental_transformations(config, universe_id, out_dir)
+    _apply_fred_transformations(config, universe_id, out_dir)
+
+    # 6) Export ML-ready features to optimized formats
+    export_features = config.get("export", {}).get("ml_features", True)
+    if export_features:
+        print("📦 Exporting ML-ready features to Parquet...")  # noqa: T201
+        from features.ml_feature_exporter import MLFeatureExporter
+        
+        exporter = MLFeatureExporter(out_dir, config)
+        results = exporter.run()
+        
+        # Display summary
+        total_features = 0
+        for category, result in results.items():
+            if result.get('status') == 'success':
+                total_features += result.get('total_features', 0)
+                print(f"  • {category}: {result['total_features']} features")  # noqa: T201
+        
+        print(f"✅ Exported {total_features} total ML-ready features")  # noqa: T201
+    else:
+        print("⏭️  ML feature export disabled in config")  # noqa: T201
 
     print("STOP: Await further instructions")  # noqa: T201
 
