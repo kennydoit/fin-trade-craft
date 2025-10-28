@@ -1,51 +1,22 @@
 {
     "workbench.colorCustomizations": {
-        "activityBar.activeBackground": "#27d6e9",
-        "activityBar.background": "#27d6e9",
+        "activityBar.activeBackground": "#65c89b",
+        "activityBar.background": "#65c89b",
         "activityBar.foreground": "#15202b",
         "activityBar.inactiveForeground": "#15202b99",
-        "activityBarBadge.background": "#e718d3",
+        "activityBarBadge.background": "#945bc4",
         "activityBarBadge.foreground": "#e7e7e7",
         "commandCenter.border": "#15202b99",
-        "sash.hoverBorder": "#27d6e9",
-        "statusBar.background": "#14b7c9",
+        "sash.hoverBorder": "#65c89b",
+        "statusBar.background": "#42b883",
         "statusBar.foreground": "#15202b",
-        "statusBarItem.hoverBackground": "#0f8d9b",
-        "statusBarItem.remoteBackground": "#14b7c9",
+        "statusBarItem.hoverBackground": "#359268",
+        "statusBarItem.remoteBackground": "#42b883",
         "statusBarItem.remoteForeground": "#15202b",
-        "titleBar.activeBackground": "#14b7c9",
+        "titleBar.activeBackground": "#42b883",
         "titleBar.activeForeground": "#15202b",
-        "titleBar.inactiveBackground": "#14b7c999",
+        "titleBar.inactiveBackground": "#42b88399",
         "titleBar.inactiveForeground": "#15202b99"
     },
-    "peacock.color": "#14b7c9",
-    "python.defaultInterpreterPath": "./.venv/Scripts/python.exe",
-    "python.terminal.activateEnvironment": true,
-    "code-runner.executorMap": {
-        "python": "$pythonPath -u $fullFileName"
-    },
-    "code-runner.fileDirectoryAsCwd": true,
-    "code-runner.runInTerminal": true,
-    "code-runner.preserveFocus": false,
-    "code-runner.clearPreviousOutput": false,
-    "code-runner.saveFileBeforeRun": true,
-    "code-runner.executorMapByFileExtension": {
-        ".py": "$pythonPath -u $fullFileName"
-    },
-    "sqltools.connections": [
-        {
-            "name": "fin-trade-craft-local",
-            "driver": "PostgreSQL",
-            "server": "localhost",
-            "port": 5432,
-            "database": "fin_trade_craft",
-            "username": "postgres",
-            "askForPassword": true,
-            "connectOnStartup": false,
-            "previewLimit": 50,
-            "connectionTimeout": 30
-        }
-    ],
-    "sqltools.useNodeRuntime": true,
-    "sqltools.defaultExportType": "json"
+    "peacock.color": "#42b883"
 }
