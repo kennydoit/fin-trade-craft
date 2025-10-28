@@ -30,7 +30,9 @@ collection_dates:
   start_date: '2020-01-01'
   end_date: '2025-07-31'
 
+# Data Source Switches
 data_switches:
+  # Fundamental Data
   fundamentals:
     balance_sheet:
       enabled: true
@@ -47,9 +49,11 @@ data_switches:
     insider_transactions:
       enabled: true
       offset: 5
+  # Federal Reserve Economic Data
   fred:
     commodities: true
     economic_indicators: true
+  # Market Data
   ohlcv:
     time_series_daily_adjusted: true
 
