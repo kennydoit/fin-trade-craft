@@ -22,6 +22,7 @@ dependencies = [
     "urllib3>=1.26.5",
     "pyarrow>=21.0.0",
     "sqlalchemy>=2.0.43",
+    "plotly>=5.0.0",
 ]
 
 [project.optional-dependencies]
