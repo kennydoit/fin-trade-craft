@@ -421,13 +421,20 @@ class TimeSeriesDailyAdjustedTransformer:
             # Convert symbol_id to string for raw table comparison (raw.symbol_id is TEXT)
             symbol_id_str = str(symbol_id)
             
-            # Fetch time series data for symbol
+            # Fetch time series data for symbol (last 250 periods for efficiency)
+            # 250 periods covers: 55 EMA lookback + 40 forward targets + 155 buffer
             query = """
                 SELECT symbol_id, symbol, date, open, high, low, 
                        close, adjusted_close, volume
-                FROM raw.time_series_daily_adjusted
-                WHERE symbol_id = %s
-                ORDER BY date
+                FROM (
+                    SELECT symbol_id, symbol, date, open, high, low, 
+                           close, adjusted_close, volume
+                    FROM raw.time_series_daily_adjusted
+                    WHERE symbol_id = %s
+                    ORDER BY date DESC
+                    LIMIT 250
+                ) subq
+                ORDER BY date ASC
             """
             
             df = pd.read_sql(query, self.db.connection, params=(symbol_id_str,))
@@ -489,13 +496,13 @@ class TimeSeriesDailyAdjustedTransformer:
                 }
             
             # Load to database
-            if mode == 'full':
-                # Delete existing records for this symbol
-                delete_query = """
-                    DELETE FROM transforms.time_series_daily_adjusted
-                    WHERE symbol_id = %s
-                """
-                self.db.execute_query(delete_query, (symbol_id,))
+            # Always delete existing records for this symbol before inserting
+            # (Since we're only fetching last 250 periods, we replace them all)
+            delete_query = """
+                DELETE FROM transforms.time_series_daily_adjusted
+                WHERE symbol_id = %s
+            """
+            self.db.execute_query(delete_query, (symbol_id,))
             
             # Insert transformed data
             insert_query = """

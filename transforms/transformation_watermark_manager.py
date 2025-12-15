@@ -232,7 +232,10 @@ class TransformationWatermarkManager:
                   w.last_successful_run IS NULL 
                   OR w.last_successful_run < NOW() - INTERVAL '1 hour' * %(staleness_hours)s
               )
-              AND p.status IN ('Active', 'Delisted')
+              AND (
+                  p.status = 'Active'
+                  OR (p.status = 'Delisted' AND (w.last_date_processed IS NULL OR w.last_date_processed < p.delisting_date))
+              )
               AND p.asset_type IN ('Stock', 'ETF')
             ORDER BY 
                 w.last_successful_run ASC NULLS FIRST,
