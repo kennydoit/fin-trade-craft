@@ -1,406 +1,348 @@
-#!/usr/bin/env python3
-"""Transform Commodities data into ML-ready features.
+"""Transform commodities data - Simplified append-only approach.
 
-Creates table ``transformed.commodities_features`` containing normalized
-commodity prices with forward-filled missing data, lookback-only normalization,
-and daily frequency alignment for ML models.
+Commodities data is organized by date. This transformer:
+1. Copies source.commodities → transforms.commodities (one-time init)
+2. Adds feature columns with NULL values
+3. Processes unprocessed records (WHERE processed_at IS NULL)
+4. Future runs only process new dates
 
-Key Features:
-- Forward-fills monthly data to create daily records
-- Uses lookback-only normalization to prevent data leakage
-- Creates momentum, volatility, and trend features
-- Handles both daily and monthly commodity data
-- All features are ML-ready with proper scaling
-- Features prefixed with fred_comm_ for consistency
+Usage:
+    # One-time initialization
+    python transform_commodities.py --init
+    
+    # Process unprocessed records (run after new data arrives)
+    python transform_commodities.py --process
 """
 
-from __future__ import annotations
-
 import sys
-from datetime import datetime, timedelta
+import logging
+import argparse
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import pandas as pd
+import numpy as np
 
-# Add project root to path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
 class CommoditiesTransformer:
-    """Transform commodities into ML-ready features."""
-    
-    def __init__(self) -> None:
+    """Simplified commodities transformer with embedded watermark."""
+
+    def __init__(self):
         self.db = PostgresDatabaseManager()
-        
-        # Normalization parameters (lookback-only to prevent leakage)
-        self.lookback_window = 252  # ~1 year of trading days for normalization
-        self.momentum_windows = [5, 10, 21, 63]  # 1w, 2w, 1m, 3m
-        self.volatility_windows = [21, 63]  # 1m, 3m
-        self.epsilon = 1e-8  # For safe division
-        
-        # Core commodities we'll focus on
-        self.core_commodities = [
-            'WTI', 'BRENT', 'NATURAL_GAS',
-            'COPPER', 'ALUMINUM', 'WHEAT', 'CORN',
-            'COTTON', 'SUGAR', 'COFFEE', 'ALL_COMMODITIES'
-        ]
 
-    def _fetch_commodities(self) -> pd.DataFrame:
-        """Fetch all commodities data from the source table."""
-        query = """
-            SELECT
-                commodity_name,
-                function_name,
-                date,
-                interval,
-                value,
-                unit,
-                name
-            FROM source.commodities
-            WHERE api_response_status = 'success'
-                AND value IS NOT NULL
-                AND date IS NOT NULL
-            ORDER BY function_name, date
-        """
-        return self.db.fetch_dataframe(query)
+    def _safe_div(self, num, denom, epsilon=1e-6):
+        """Safe division avoiding divide by zero."""
+        return num / (denom + epsilon)
 
-    def _create_daily_calendar(self, start_date: str, end_date: str) -> pd.DataFrame:
-        """Create a daily calendar for the analysis period."""
-        date_range = pd.date_range(start=start_date, end=end_date, freq='D')
-        return pd.DataFrame({'date': date_range})
-
-    def _pivot_commodities(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Pivot commodities to have each commodity as a column."""
-        # Use function_name as the primary identifier since it's more standardized
-        pivot_df = df.pivot_table(
-            index='date',
-            columns='function_name',
-            values='value',
-            aggfunc='first'  # Take first value if duplicates
-        ).reset_index()
+    def initialize(self):
+        """Initialize transforms.commodities from source data."""
+        logger.info("Initializing transforms.commodities...")
         
-        # Flatten column names
-        pivot_df.columns.name = None
-        
-        return pivot_df
-
-    def _forward_fill_monthly_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Forward fill monthly data to create daily records."""
-        # Get date range from data
-        min_date = df['date'].min()
-        max_date = df['date'].max()
-        
-        # Create daily calendar
-        daily_calendar = self._create_daily_calendar(min_date, max_date)
-        
-        # Merge with daily calendar
-        df_daily = daily_calendar.merge(df, on='date', how='left')
-        
-        # Forward fill all commodity columns
-        commodity_columns = [col for col in df_daily.columns if col != 'date']
-        for col in commodity_columns:
-            df_daily[col] = df_daily[col].ffill()
-        
-        # Remove rows where all commodities are still null (before first data point)
-        df_daily = df_daily.dropna(how='all', subset=commodity_columns)
-        
-        return df_daily
-
-    def _safe_divide(self, numerator: pd.Series, denominator: pd.Series) -> pd.Series:
-        """Safely divide two series, handling division by zero."""
-        return numerator / (denominator + self.epsilon)
-
-    def _calculate_rolling_zscore(self, series: pd.Series, window: int) -> pd.Series:
-        """Calculate rolling z-score using only historical data."""
-        rolling_mean = series.rolling(window=window, min_periods=window//2).mean()
-        rolling_std = series.rolling(window=window, min_periods=window//2).std()
-        
-        # Prevent division by zero
-        rolling_std = rolling_std.fillna(1.0)
-        rolling_std = np.where(rolling_std < self.epsilon, 1.0, rolling_std)
-        
-        return (series - rolling_mean) / rolling_std
-
-    def _calculate_momentum_features(self, df: pd.DataFrame, commodity_cols: list[str]) -> pd.DataFrame:
-        """Calculate momentum features (returns) for different time windows."""
-        df_features = df.copy()
-        
-        for col in commodity_cols:
-            if col in df_features.columns:
-                for window in self.momentum_windows:
-                    # Calculate returns (percent change)
-                    momentum_col = f"{col}_momentum_{window}d"
-                    df_features[momentum_col] = df_features[col].pct_change(periods=window)
-                    
-                    # Calculate rolling average momentum
-                    avg_momentum_col = f"{col}_avg_momentum_{window}d"
-                    df_features[avg_momentum_col] = df_features[momentum_col].rolling(
-                        window=window, min_periods=window//2
-                    ).mean()
-                    
-        return df_features
-
-    def _calculate_volatility_features(self, df: pd.DataFrame, commodity_cols: list[str]) -> pd.DataFrame:
-        """Calculate volatility features for different time windows."""
-        df_features = df.copy()
-        
-        for col in commodity_cols:
-            if col in df_features.columns:
-                # First calculate daily returns if not already present
-                daily_returns_col = f"{col}_daily_returns"
-                if daily_returns_col not in df_features.columns:
-                    df_features[daily_returns_col] = df_features[col].pct_change()
-                
-                for window in self.volatility_windows:
-                    # Rolling volatility (standard deviation of returns)
-                    vol_col = f"{col}_volatility_{window}d"
-                    df_features[vol_col] = df_features[daily_returns_col].rolling(
-                        window=window, min_periods=window//2
-                    ).std()
-                    
-        return df_features
-
-    def _calculate_trend_features(self, df: pd.DataFrame, commodity_cols: list[str]) -> pd.DataFrame:
-        """Calculate trend features using moving averages and slopes."""
-        df_features = df.copy()
-        
-        for col in commodity_cols:
-            if col in df_features.columns:
-                # Short-term vs long-term moving average ratio
-                ma_5 = df_features[col].rolling(window=5, min_periods=3).mean()
-                ma_21 = df_features[col].rolling(window=21, min_periods=10).mean()
-                ma_63 = df_features[col].rolling(window=63, min_periods=30).mean()
-                
-                df_features[f"{col}_ma5_ma21_ratio"] = self._safe_divide(ma_5, ma_21)
-                df_features[f"{col}_ma21_ma63_ratio"] = self._safe_divide(ma_21, ma_63)
-                
-                # Trend strength (linear regression slope over different windows)
-                for window in [21, 63]:
-                    slope_col = f"{col}_trend_slope_{window}d"
-                    # Calculate rolling linear regression slope
-                    df_features[slope_col] = df_features[col].rolling(
-                        window=window, min_periods=window//2
-                    ).apply(self._calculate_slope, raw=False)
-                    
-        return df_features
-
-    def _calculate_slope(self, series: pd.Series) -> float:
-        """Calculate linear regression slope for a series."""
-        if len(series) < 2 or series.isna().all():
-            return np.nan
-        
-        # Remove NaN values
-        clean_series = series.dropna()
-        if len(clean_series) < 2:
-            return np.nan
-            
-        x = np.arange(len(clean_series))
-        y = clean_series.values
-        
-        # Calculate slope using least squares
+        self.db.connect()
         try:
-            slope = np.polyfit(x, y, 1)[0]
-            return slope
-        except (np.linalg.LinAlgError, ValueError):
-            return np.nan
-
-    def _calculate_cross_commodity_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate features that combine multiple commodities."""
-        df_features = df.copy()
-        
-        # Energy complex features
-        if 'WTI' in df_features.columns and 'BRENT' in df_features.columns:
-            # WTI-Brent spread (important arbitrage indicator)
-            df_features['wti_brent_spread'] = df_features['WTI'] - df_features['BRENT']
+            # Create table from source
+            logger.info("Creating base table from source.commodities...")
+            self.db.execute_query("DROP TABLE IF EXISTS transforms.commodities CASCADE")
             
-        if 'WTI' in df_features.columns and 'NATURAL_GAS' in df_features.columns:
-            # Oil-Gas ratio (energy substitution indicator)
-            df_features['oil_gas_ratio'] = self._safe_divide(df_features['WTI'], df_features['NATURAL_GAS'])
+            self.db.execute_query("""
+                CREATE TABLE transforms.commodities AS
+                SELECT 
+                    commodity,
+                    date,
+                    value,
+                    update_frequency,
+                    load_date
+                FROM raw.fred_commodities
+                WHERE value IS NOT NULL
+                  AND date IS NOT NULL
+                ORDER BY commodity, date
+            """)
             
-        # Metals complex features
-        if 'COPPER' in df_features.columns and 'ALUMINUM' in df_features.columns:
-            # Copper-Aluminum ratio (industrial metals indicator)
-            df_features['copper_aluminum_ratio'] = self._safe_divide(df_features['COPPER'], df_features['ALUMINUM'])
+            # Add primary key
+            self.db.execute_query("""
+                ALTER TABLE transforms.commodities 
+                ADD PRIMARY KEY (commodity, date)
+            """)
             
-        # Agricultural features
-        grain_commodities = ['WHEAT', 'CORN']
-        available_grains = [col for col in grain_commodities if col in df_features.columns]
-        
-        if len(available_grains) >= 2:
-            # Create grain price index (simple average)
-            df_features['grain_price_index'] = df_features[available_grains].mean(axis=1)
-            
-        # Food vs Energy relationship
-        if 'WTI' in df_features.columns and available_grains:
-            # Oil-Grain correlation (food vs energy costs)
-            df_features['oil_grain_ratio'] = self._safe_divide(
-                df_features['WTI'], 
-                df_features[available_grains].mean(axis=1)
-            )
-            
-        return df_features
-
-    def _normalize_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Apply lookback-only normalization to all features."""
-        df_normalized = df.copy()
-        
-        # Identify feature columns (exclude date and raw commodities)
-        feature_columns = [
-            col for col in df_normalized.columns 
-            if col not in ['date'] + self.core_commodities
-            and not col.endswith('_daily_returns')  # Skip daily returns as they're already normalized
-        ]
-        
-        print(f"Normalizing {len(feature_columns)} feature columns...")  # noqa: T201
-        
-        for col in feature_columns:
-            if df_normalized[col].dtype in ['float64', 'int64']:
-                # Apply rolling z-score normalization with fred_comm_ prefix
-                df_normalized[f"fred_comm_{col}_normalized"] = self._calculate_rolling_zscore(
-                    df_normalized[col], self.lookback_window
-                )
+            # Add feature columns (all start as NULL)
+            logger.info("Adding feature columns...")
+            feature_cols = [
+                # Price levels (normalized)
+                'comm_price_zscore_21d', 'comm_price_zscore_63d', 'comm_price_zscore_252d',
                 
-        return df_normalized
-
-    def _create_output_table(self, df: pd.DataFrame) -> None:
-        """Create the output table in the transformed schema with only ML-ready features."""
-        # Create schema if it doesn't exist
-        self.db.execute_query("CREATE SCHEMA IF NOT EXISTS transformed")
-        
-        # Identify only the normalized ML-ready feature columns (with fred_comm_ prefix)
-        feature_columns = [col for col in df.columns if col.startswith('fred_comm_')]
-        
-        print(f"Creating table with {len(feature_columns)} ML-ready feature columns...")  # noqa: T201
-        
-        # Create column definitions
-        column_definitions = [
-            "date DATE PRIMARY KEY",
-            "created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()",
-            "updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()"
-        ]
-        
-        # Add feature columns
-        for col in feature_columns:
-            column_definitions.append(f"{col} NUMERIC(15,6)")
-        
-        # Create table
-        create_sql = f"""
-            DROP TABLE IF EXISTS transformed.commodities_features;
-            CREATE TABLE transformed.commodities_features (
-                {',\n                '.join(column_definitions)}
-            )
-        """
-        self.db.execute_query(create_sql)
-        print(f"Created table with {len(feature_columns)} ML-ready feature columns")  # noqa: T201
-
-    def _write_output(self, df: pd.DataFrame) -> None:
-        """Write the transformed features to the database."""
-        # Select only date and ML-ready features (with fred_comm_ prefix)
-        feature_columns = [col for col in df.columns if col.startswith('fred_comm_')]
-        output_columns = ['date'] + feature_columns
-        
-        df_output = df[output_columns].copy()
-        
-        # Replace infinite values with None
-        numeric_columns = df_output.select_dtypes(include=[np.number]).columns
-        for col in numeric_columns:
-            df_output[col] = df_output[col].replace([float('inf'), float('-inf')], None)
-        
-        # Create records for batch insert
-        column_list = ', '.join(output_columns)
-        placeholders = ', '.join(['%s'] * len(output_columns))
-        
-        records = []
-        for _, row in df_output.iterrows():
-            record = []
-            for col in output_columns:
-                value = row[col]
-                if pd.isna(value):
-                    record.append(None)
-                else:
-                    record.append(value)
-            records.append(tuple(record))
-        
-        # Insert data with upsert logic
-        insert_sql = f"""
-            INSERT INTO transformed.commodities_features (
-                {column_list}
-            ) VALUES ({placeholders})
-            ON CONFLICT (date)
-            DO UPDATE SET
-                {', '.join([f'{col} = EXCLUDED.{col}' for col in feature_columns])},
-                updated_at = NOW()
-        """
-        
-        self.db.execute_many(insert_sql, records)
-        print(f"Inserted {len(records)} records with {len(feature_columns)} ML-ready features")  # noqa: T201
-
-    def run(self) -> pd.DataFrame:
-        """Execute the complete commodities transformation pipeline."""
-        print("Starting commodities transformation...")  # noqa: T201
-        
-        try:
-            # Connect to database
-            self.db.connect()
+                # Momentum (returns)
+                'comm_return_1d', 'comm_return_5d', 'comm_return_21d', 'comm_return_63d',
+                
+                # Volatility
+                'comm_volatility_21d', 'comm_volatility_63d',
+                
+                # Trend indicators
+                'comm_ma5_ma21_ratio', 'comm_ma21_ma63_ratio',
+                'comm_trend_slope_21d', 'comm_trend_slope_63d',
+                
+                # Relative strength
+                'comm_rsi_14d',
+                
+                # Rankings (across commodities on same date)
+                'comm_return_5d_rank', 'comm_return_21d_rank',
+                'comm_volatility_21d_rank',
+                
+                # Flags
+                'comm_sharp_move_flag', 'comm_high_volatility_flag'
+            ]
             
-            # Fetch raw data
-            print("Fetching commodities data...")  # noqa: T201
-            raw_df = self._fetch_commodities()
-            print(f"Fetched {len(raw_df)} raw records")  # noqa: T201
+            for col in feature_cols:
+                col_type = 'INTEGER' if 'flag' in col else 'NUMERIC'
+                self.db.execute_query(f"ALTER TABLE transforms.commodities ADD COLUMN {col} {col_type}")
             
-            if raw_df.empty:
-                print("No commodities data found. Skipping transformation.")  # noqa: T201
-                return pd.DataFrame()
+            # Add processed timestamp
+            self.db.execute_query("""
+                ALTER TABLE transforms.commodities 
+                ADD COLUMN processed_at TIMESTAMPTZ
+            """)
             
-            # Convert date column to datetime
-            raw_df['date'] = pd.to_datetime(raw_df['date'])
+            # Create index on unprocessed
+            self.db.execute_query("""
+                CREATE INDEX idx_comm_unprocessed 
+                ON transforms.commodities (commodity, date) 
+                WHERE processed_at IS NULL
+            """)
             
-            # Pivot commodities to columns
-            print("Pivoting commodities to columns...")  # noqa: T201
-            pivot_df = self._pivot_commodities(raw_df)
-            print(f"Pivoted to {len(pivot_df.columns)-1} commodity columns")  # noqa: T201
+            # Create index on date for time-series queries
+            self.db.execute_query("""
+                CREATE INDEX idx_comm_date 
+                ON transforms.commodities (date DESC)
+            """)
             
-            # Forward fill to create daily data
-            print("Forward filling monthly data to daily frequency...")  # noqa: T201
-            daily_df = self._forward_fill_monthly_data(pivot_df)
-            print(f"Created {len(daily_df)} daily records")  # noqa: T201
-            
-            # Calculate features
-            commodity_cols = [col for col in daily_df.columns if col != 'date']
-            
-            print("Calculating momentum features...")  # noqa: T201
-            df_with_momentum = self._calculate_momentum_features(daily_df, commodity_cols)
-            
-            print("Calculating volatility features...")  # noqa: T201
-            df_with_volatility = self._calculate_volatility_features(df_with_momentum, commodity_cols)
-            
-            print("Calculating trend features...")  # noqa: T201
-            df_with_trends = self._calculate_trend_features(df_with_volatility, commodity_cols)
-            
-            print("Calculating cross-commodity features...")  # noqa: T201
-            df_with_cross = self._calculate_cross_commodity_features(df_with_trends)
-            
-            print("Applying lookback-only normalization...")  # noqa: T201
-            df_normalized = self._normalize_features(df_with_cross)
-            
-            # Create output table and write data
-            print("Creating output table...")  # noqa: T201
-            self._create_output_table(df_normalized)
-            
-            print("Writing transformed data to database...")  # noqa: T201
-            self._write_output(df_normalized)
-            
-            print("Commodities transformation completed successfully!")  # noqa: T201
-            return df_normalized
+            count = self.db.fetch_query("SELECT COUNT(*) FROM transforms.commodities")[0][0]
+            logger.info(f"✅ Initialized with {count:,} records")
             
         finally:
             self.db.close()
 
+    def process(self):
+        """Process unprocessed records."""
+        logger.info("=" * 80)
+        logger.info("PROCESSING UNPROCESSED COMMODITIES RECORDS")
+        logger.info("=" * 80)
+        
+        self.db.connect()
+        try:
+            # Count unprocessed
+            unprocessed = self.db.fetch_query("""
+                SELECT COUNT(*) FROM transforms.commodities 
+                WHERE processed_at IS NULL
+            """)[0][0]
+            
+            if unprocessed == 0:
+                logger.info("No unprocessed records")
+                return
+            
+            logger.info(f"Found {unprocessed:,} unprocessed records")
+            logger.info("Fetching data...")
+            
+            # Fetch all data for processing (need historical context for features)
+            query = """
+                SELECT 
+                    commodity,
+                    date,
+                    value
+                FROM transforms.commodities
+                ORDER BY commodity, date
+            """
+            
+            df = pd.read_sql(query, self.db.connection)
+            logger.info(f"Loaded {len(df):,} total records for feature computation")
+            
+            # Compute features
+            logger.info("Computing features...")
+            df = self._compute_all_features(df)
+            
+            # Filter to only unprocessed records for update
+            unprocessed_dates = pd.read_sql("""
+                SELECT commodity, date
+                FROM transforms.commodities
+                WHERE processed_at IS NULL
+            """, self.db.connection)
+            
+            df_update = df.merge(
+                unprocessed_dates,
+                on=['commodity', 'date'],
+                how='inner'
+            )
+            
+            logger.info(f"Updating {len(df_update):,} unprocessed records...")
+            
+            # Update in batches
+            self._batch_update(df_update)
+            
+            logger.info("=" * 80)
+            logger.info(f"✅ Processed {len(df_update):,} records")
+            logger.info("=" * 80)
+            
+        finally:
+            self.db.close()
 
-if __name__ == "__main__":  # pragma: no cover
+    def _compute_all_features(self, df):
+        """Compute all features at once."""
+        df = df.copy()
+        
+        # Sort by commodity and date
+        df = df.sort_values(['commodity', 'date'])
+        
+        # Group by commodity for time-series features
+        grouped = df.groupby('commodity')
+        
+        # Price normalization (z-scores using rolling windows)
+        for window in [21, 63, 252]:
+            df[f'comm_price_zscore_{window}d'] = grouped['value'].transform(
+                lambda x: (x - x.rolling(window, min_periods=max(2, window//2)).mean()) / 
+                         (x.rolling(window, min_periods=max(2, window//2)).std() + 1e-8)
+            )
+        
+        # Returns (momentum)
+        df['comm_return_1d'] = grouped['value'].pct_change(1, fill_method=None)
+        df['comm_return_5d'] = grouped['value'].pct_change(5, fill_method=None)
+        df['comm_return_21d'] = grouped['value'].pct_change(21, fill_method=None)
+        df['comm_return_63d'] = grouped['value'].pct_change(63, fill_method=None)
+        
+        # Volatility (std of daily returns)
+        df['comm_volatility_21d'] = grouped['comm_return_1d'].transform(
+            lambda x: x.rolling(21, min_periods=10).std()
+        )
+        df['comm_volatility_63d'] = grouped['comm_return_1d'].transform(
+            lambda x: x.rolling(63, min_periods=30).std()
+        )
+        
+        # Moving averages and ratios
+        ma5 = grouped['value'].transform(lambda x: x.rolling(5, min_periods=3).mean())
+        ma21 = grouped['value'].transform(lambda x: x.rolling(21, min_periods=10).mean())
+        ma63 = grouped['value'].transform(lambda x: x.rolling(63, min_periods=30).mean())
+        
+        df['comm_ma5_ma21_ratio'] = self._safe_div(ma5, ma21)
+        df['comm_ma21_ma63_ratio'] = self._safe_div(ma21, ma63)
+        
+        # Trend slopes (linear regression over windows)
+        for window in [21, 63]:
+            df[f'comm_trend_slope_{window}d'] = grouped['value'].transform(
+                lambda x: x.rolling(window, min_periods=max(2, window//2)).apply(
+                    self._calculate_slope, raw=False
+                )
+            )
+        
+        # RSI (Relative Strength Index)
+        df['comm_rsi_14d'] = grouped.apply(self._calculate_rsi).reset_index(level=0, drop=True)
+        
+        # Cross-commodity rankings (per date)
+        df['comm_return_5d_rank'] = df.groupby('date')['comm_return_5d'].rank(pct=True)
+        df['comm_return_21d_rank'] = df.groupby('date')['comm_return_21d'].rank(pct=True)
+        df['comm_volatility_21d_rank'] = df.groupby('date')['comm_volatility_21d'].rank(pct=True)
+        
+        # Flags
+        # Sharp move: >2 std deviation move
+        df['comm_sharp_move_flag'] = (
+            (df['comm_price_zscore_21d'].abs() > 2.0)
+        ).astype(int)
+        
+        # High volatility: >75th percentile
+        df['comm_high_volatility_flag'] = (
+            df['comm_volatility_21d_rank'] > 0.75
+        ).astype(int)
+        
+        return df
+
+    def _calculate_slope(self, series):
+        """Calculate linear regression slope."""
+        if len(series) < 2 or series.isna().all():
+            return np.nan
+        
+        clean_series = series.dropna()
+        if len(clean_series) < 2:
+            return np.nan
+        
+        x = np.arange(len(clean_series))
+        y = clean_series.values
+        
+        # Linear regression slope
+        slope = np.polyfit(x, y, 1)[0]
+        return slope
+
+    def _calculate_rsi(self, group_df):
+        """Calculate RSI (Relative Strength Index) for a commodity."""
+        if 'comm_return_1d' not in group_df.columns:
+            return pd.Series([50] * len(group_df), index=group_df.index)
+        
+        returns = group_df['comm_return_1d']
+        
+        # Separate gains and losses
+        gains = returns.where(returns > 0, 0)
+        losses = -returns.where(returns < 0, 0)
+        
+        # Calculate rolling averages
+        avg_gains = gains.rolling(14, min_periods=7).mean()
+        avg_losses = losses.rolling(14, min_periods=7).mean()
+        
+        # Calculate RS and RSI
+        rs = self._safe_div(avg_gains, avg_losses)
+        rsi = 100 - (100 / (1 + rs))
+        
+        return rsi
+
+    def _batch_update(self, df):
+        """Update transforms table in batches."""
+        feature_cols = [c for c in df.columns if c.startswith('comm_')]
+        
+        # Replace inf with None
+        for col in feature_cols:
+            if df[col].dtype in ['float64', 'int64']:
+                df[col] = df[col].replace([np.inf, -np.inf], None)
+        
+        # Build update query
+        set_clause = ', '.join([f"{col} = %s" for col in feature_cols])
+        update_sql = f"""
+            UPDATE transforms.commodities
+            SET {set_clause}, processed_at = NOW()
+            WHERE commodity = %s AND date = %s
+        """
+        
+        # Prepare records
+        records = []
+        for _, row in df.iterrows():
+            values = [None if pd.isna(row[col]) else row[col] for col in feature_cols]
+            values.extend([row['commodity'], row['date']])
+            records.append(tuple(values))
+        
+        # Execute batch
+        self.db.execute_many(update_sql, records)
+        logger.info(f"Updated {len(records):,} records")
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Commodities transformer')
+    parser.add_argument('--init', action='store_true', help='Initialize table')
+    parser.add_argument('--process', action='store_true', help='Process unprocessed records')
+    
+    args = parser.parse_args()
+    
+    if not (args.init or args.process):
+        parser.error("Must specify --init or --process")
+    
     transformer = CommoditiesTransformer()
-    df = transformer.run()
-    print(f"Final dataset shape: {df.shape}")  # noqa: T201
+    
+    if args.init:
+        transformer.initialize()
+    
+    if args.process:
+        transformer.process()
+
+
+if __name__ == "__main__":
+    main()

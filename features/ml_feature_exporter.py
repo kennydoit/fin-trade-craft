@@ -53,7 +53,7 @@ class MLFeatureExporter:
         
         # Define table mappings
         table_mapping = {
-            'balance_sheet': 'balance_sheet_features',
+            'balance_sheet': 'balance_sheet',
             'cash_flow': 'cash_flow_features', 
             'income_statement': 'income_statement_features'
         }

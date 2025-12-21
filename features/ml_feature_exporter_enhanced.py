@@ -163,7 +163,7 @@ class MLFeatureExporter:
                 'export_type': 'fundamental_features',
                 'universe_id': universe_id,
                 'total_features': len(df.columns),
-                'balance_sheet_features': len(balance_sheet_cols),
+                'balance_sheet': len(balance_sheet_cols),
                 'income_features': len(income_cols),
                 'cash_flow_features': len(cash_flow_cols),
                 'macro_features': len(macro_cols),
