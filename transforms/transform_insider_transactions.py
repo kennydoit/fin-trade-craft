@@ -4,6 +4,15 @@ Transform Insider Transactions from raw schema to transforms schema.
 
 This script reads from raw.insider_transactions and creates a transformed version
 in transforms.insider_transactions with tiered classification of insider roles.
+
+Uses self-watermarking pattern: processed_at timestamp for incremental updates.
+
+Usage:
+    # Initialize table structure and populate from all raw data
+    python transform_insider_transactions.py --init
+    
+    # Process only new unprocessed transactions
+    python transform_insider_transactions.py --process
 """
 
 import argparse
@@ -17,7 +26,6 @@ import pandas as pd
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent))
 from db.postgres_database_manager import PostgresDatabaseManager
-from transforms.transformation_watermark_manager import TransformationWatermarkManager
 
 
 # ========== Title Normalization & Tiering ==========
@@ -157,8 +165,6 @@ class InsiderTransactionsTransformer:
     
     def __init__(self):
         self.db = PostgresDatabaseManager()
-        self.watermark_manager = TransformationWatermarkManager()
-        self.transformation_group = 'insider_transactions'
     
     def ensure_transforms_schema(self, db):
         """Ensure the transforms schema exists."""
@@ -189,7 +195,8 @@ class InsiderTransactionsTransformer:
                 share_price             DECIMAL(20,4),
                 transaction_value       DECIMAL(20,4),  -- shares * share_price
                 created_at              TIMESTAMP DEFAULT NOW(),
-                updated_at              TIMESTAMP DEFAULT NOW()
+                updated_at              TIMESTAMP DEFAULT NOW(),
+                processed_at            TIMESTAMPTZ
             );
             
             -- Create indexes
@@ -205,6 +212,8 @@ class InsiderTransactionsTransformer:
                 ON transforms.insider_transactions(transaction_type);
             CREATE INDEX IF NOT EXISTS idx_transforms_insider_owner 
                 ON transforms.insider_transactions(is_owner_10pct);
+            CREATE INDEX IF NOT EXISTS idx_transforms_insider_processed 
+                ON transforms.insider_transactions(processed_at);
         """
         
         db.execute_query(create_table_sql)
@@ -349,119 +358,185 @@ class InsiderTransactionsTransformer:
         
         print(f"✅ Transformation complete: {total_inserted:,} records loaded")
         
-        # Update watermarks if processing specific symbols
-        if symbols:
-            self.update_watermarks(db, symbols, total_inserted > 0)
-        
         # Print summary statistics
         self.print_summary_stats(db)
-    
-    def update_watermarks(self, db, symbols: list, success: bool):
-        """Update watermarks for processed symbols."""
-        print("\n📝 Updating watermarks...")
         
-        if success:
-            # Bulk update using a single query with a subquery for date ranges
-            symbol_ids = [s['symbol_id'] for s in symbols]
-            symbol_ids_str = ','.join(map(str, symbol_ids))
+        return total_inserted
+    
+    def initialize(self):
+        """Initialize transforms.insider_transactions table structure and populate from all raw data."""
+        print("Initializing insider transactions transform...")
+        
+        self.db.connect()
+        try:
+            # Ensure schema exists
+            self.ensure_transforms_schema(self.db)
             
-            update_query = f"""
-                UPDATE transforms.transformation_watermarks w
-                SET 
-                    first_date_processed = COALESCE(w.first_date_processed, t.first_date),
-                    last_date_processed = t.last_date,
-                    last_run_status = 'success',
-                    consecutive_failures = 0,
-                    last_successful_run = NOW(),
-                    updated_at = NOW()
-                FROM (
-                    SELECT 
-                        symbol_id,
-                        MIN(transaction_date) as first_date,
-                        MAX(transaction_date) as last_date
-                    FROM transforms.insider_transactions
-                    WHERE symbol_id IN ({symbol_ids_str})
-                    GROUP BY symbol_id
-                ) t
-                WHERE w.symbol_id = t.symbol_id
-                  AND w.transformation_group = %(transformation_group)s
+            # Create table
+            self.create_transformed_table(self.db)
+            
+            # Transform and load all data
+            self.transform_and_load(self.db)
+            
+            # Mark all as processed
+            print("\nMarking all records as processed...")
+            self.db.execute_query("""
+                UPDATE transforms.insider_transactions
+                SET processed_at = NOW()
+                WHERE processed_at IS NULL
+            """)
+            
+            count = self.db.fetch_query("SELECT COUNT(*) FROM transforms.insider_transactions")[0][0]
+            print(f"Initialized with {count:,} records (all marked processed)")
+            
+        finally:
+            self.db.close()
+    
+    def process_unprocessed(self):
+        """Process only new unprocessed transactions incrementally."""
+        print("Processing new insider transactions...")
+        
+        self.db.connect()
+        try:
+            # Find new transactions from raw that don't exist in transforms
+            print("Finding new transactions to process...")
+            
+            unprocessed_count = self.db.fetch_query("""
+                SELECT COUNT(*)
+                FROM raw.insider_transactions r
+                WHERE NOT EXISTS (
+                    SELECT 1 
+                    FROM transforms.insider_transactions t
+                    WHERE t.symbol_id = r.symbol_id 
+                      AND t.transaction_date = r.transaction_date
+                      AND t.executive = r.insider_name
+                      AND t.processed_at IS NOT NULL
+                )
+            """)[0][0]
+            
+            if unprocessed_count == 0:
+                print("No new transactions to process")
+                return
+            
+            print(f"Found {unprocessed_count:,} new transactions to transform")
+            
+            # Get new transactions and transform them
+            query = """
+                SELECT 
+                    r.symbol_id,
+                    r.symbol,
+                    r.transaction_date,
+                    r.insider_name,
+                    r.insider_title,
+                    r.transaction_type,
+                    r.shares,
+                    r.price_per_share
+                FROM raw.insider_transactions r
+                WHERE NOT EXISTS (
+                    SELECT 1 
+                    FROM transforms.insider_transactions t
+                    WHERE t.symbol_id = r.symbol_id 
+                      AND t.transaction_date = r.transaction_date
+                      AND t.executive = r.insider_name
+                      AND t.processed_at IS NOT NULL
+                )
+                ORDER BY r.symbol_id, r.transaction_date
             """
             
-            try:
-                db.execute_query(update_query, {'transformation_group': self.transformation_group})
-                print(f"   Updated {len(symbols)} watermarks")
-            except Exception as e:
-                print(f"⚠️  Error updating watermarks: {e}")
-        else:
-            # Update failed symbols individually
-            for symbol in symbols:
-                try:
-                    update_query = """
-                        UPDATE transforms.transformation_watermarks
-                        SET 
-                            last_run_status = 'failed',
-                            consecutive_failures = consecutive_failures + 1,
-                            transformation_eligible = CASE 
-                                WHEN consecutive_failures + 1 >= 3 THEN false 
-                                ELSE transformation_eligible 
-                            END,
-                            updated_at = NOW()
-                        WHERE symbol_id = %(symbol_id)s
-                          AND transformation_group = %(transformation_group)s
-                    """
-                    
-                    db.execute_query(
-                        update_query,
-                        {
-                            'symbol_id': symbol['symbol_id'],
-                            'transformation_group': self.transformation_group
-                        }
-                    )
-                except Exception as e:
-                    print(f"⚠️  Error updating watermark for {symbol['symbol']}: {e}")
-        
-        print("✓ Watermarks updated")
-    
-    def run_incremental(self, batch_size: int = 10000, max_symbols: int = None):
-        """Run incremental transformation for symbols needing updates."""
-        print("🔄 Running incremental transformation...")
-        
-        # Get symbols needing transformation
-        symbols = self.watermark_manager.get_symbols_needing_transformation(
-            transformation_group=self.transformation_group,
-            staleness_hours=24  # Process symbols not updated in 24 hours
-        )
-        
-        if not symbols:
-            print("✓ No symbols need transformation at this time")
-            return
-        
-        print(f"   Found {len(symbols)} symbols needing transformation")
-        
-        # Limit number of symbols if specified
-        if max_symbols and len(symbols) > max_symbols:
-            symbols = symbols[:max_symbols]
-            print(f"   Processing first {max_symbols} symbols")
-        
-        # Transform with symbol filter
-        with self.db as db:
-            self.transform_and_load(db, batch_size=batch_size, symbols=symbols)
-        
-        print("\n✅ Incremental transformation completed!")
-    
-    def run_full(self, batch_size: int = 10000):
-        """Run full transformation (recreate table from scratch)."""
-        print("🔄 Running FULL transformation (recreating table)...")
-        
-        with self.db as db:
-            # Create schema and table
-            self.ensure_transforms_schema(db)
-            self.create_transformed_table(db)
+            print("Reading new raw insider transactions...")
+            df = pd.read_sql(query, self.db.connection)
             
-            # Transform all data
-            self.transform_and_load(db, batch_size=batch_size, symbols=None)
-        
-        print("\n✅ Full transformation completed!")
+            if df.empty:
+                print("No new data found")
+                return
+            
+            print(f"   Found {len(df):,} new transactions")
+            
+            # Convert symbol_id to integer
+            df['symbol_id'] = df['symbol_id'].astype('Int64')
+            
+            # Handle NaN and extreme values
+            df['shares'] = df['shares'].replace([float('inf'), float('-inf')], None)
+            df['price_per_share'] = df['price_per_share'].replace([float('inf'), float('-inf')], None)
+            
+            max_allowed = 10**16 - 1
+            df.loc[df['shares'].abs() > max_allowed, 'shares'] = None
+            df.loc[df['price_per_share'].abs() > max_allowed, 'price_per_share'] = None
+            
+            # Apply title normalization
+            print("Normalizing executive titles...")
+            normalized = df['insider_title'].apply(normalize_title)
+            
+            df['executive_title_raw'] = normalized.apply(lambda x: x['executive_title_raw'])
+            df['executive_title_clean'] = normalized.apply(lambda x: x['executive_title_clean'])
+            df['standardized_roles'] = normalized.apply(lambda x: x['standardized_roles'])
+            df['seniority_tier'] = normalized.apply(lambda x: x['seniority_tier'])
+            df['is_owner_10pct'] = normalized.apply(lambda x: bool(x['is_owner_10pct']))
+            
+            # Calculate transaction value
+            df['transaction_value'] = df.apply(
+                lambda row: row['shares'] * row['price_per_share'] 
+                if pd.notna(row['shares']) and pd.notna(row['price_per_share']) 
+                else None, 
+                axis=1
+            )
+            
+            df.loc[df['transaction_value'].notna() & (df['transaction_value'].abs() > max_allowed), 'transaction_value'] = None
+            
+            # Rename columns
+            df = df.rename(columns={
+                'insider_name': 'executive',
+                'price_per_share': 'share_price'
+            })
+            
+            df = df.drop(columns=['insider_title'])
+            
+            # Insert new records
+            print(f"Loading transformed data...")
+            
+            records = df.to_dict('records')
+            insert_query = """
+                INSERT INTO transforms.insider_transactions (
+                    symbol_id, symbol, transaction_date, executive,
+                    executive_title_raw, executive_title_clean,
+                    standardized_roles, seniority_tier, is_owner_10pct,
+                    transaction_type,
+                    shares, share_price, transaction_value,
+                    processed_at
+                ) VALUES (
+                    %(symbol_id)s, %(symbol)s, %(transaction_date)s, %(executive)s,
+                    %(executive_title_raw)s, %(executive_title_clean)s,
+                    %(standardized_roles)s, %(seniority_tier)s, %(is_owner_10pct)s,
+                    %(transaction_type)s,
+                    %(shares)s, %(share_price)s, %(transaction_value)s,
+                    NOW()
+                )
+            """
+            
+            cursor = self.db.connection.cursor()
+            successful_inserts = 0
+            for record in records:
+                try:
+                    cursor.execute(insert_query, record)
+                    self.db.connection.commit()
+                    successful_inserts += 1
+                except Exception as e:
+                    self.db.connection.rollback()
+                    print(f"Error inserting record: {e}")
+                    continue
+            
+            cursor.close()
+            
+            print(f"Processed {successful_inserts:,} new transactions")
+            
+            # Get totals
+            total_count = self.db.fetch_query("SELECT COUNT(*) FROM transforms.insider_transactions")[0][0]
+            processed_count = self.db.fetch_query("SELECT COUNT(*) FROM transforms.insider_transactions WHERE processed_at IS NOT NULL")[0][0]
+            
+            print(f"   Total records: {total_count:,} ({processed_count:,} processed)")
+            
+        finally:
+            self.db.close()
     
     def print_summary_stats(self, db):
         """Print summary statistics about the transformed data."""
@@ -505,38 +580,31 @@ def main():
         description="Transform insider transactions with tiered role classification"
     )
     parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=10000,
-        help="Number of records to process at once (default: 10000)"
+        "--init",
+        action='store_true',
+        help="Initialize table structure and populate from all data"
     )
     parser.add_argument(
-        "--mode",
-        choices=['full', 'incremental'],
-        default='incremental',
-        help="Transformation mode: 'full' recreates table, 'incremental' updates only changed symbols (default: incremental)"
-    )
-    parser.add_argument(
-        "--max-symbols",
-        type=int,
-        help="Maximum number of symbols to process in incremental mode"
+        "--process",
+        action='store_true',
+        help="Process only new unprocessed transactions"
     )
     
     args = parser.parse_args()
     
+    if not args.init and not args.process:
+        parser.error("Must specify --init or --process")
+    
     try:
         transformer = InsiderTransactionsTransformer()
         
-        if args.mode == 'full':
-            transformer.run_full(batch_size=args.batch_size)
-        else:
-            transformer.run_incremental(
-                batch_size=args.batch_size,
-                max_symbols=args.max_symbols
-            )
+        if args.init:
+            transformer.initialize()
+        elif args.process:
+            transformer.process_unprocessed()
         
     except Exception as e:
-        print(f"\n❌ Transformation failed: {e}")
+        print(f"\nTransformation failed: {e}")
         import traceback
         traceback.print_exc()
         sys.exit(1)
@@ -550,11 +618,11 @@ if __name__ == "__main__":
 # USAGE EXAMPLES
 # ============================================================================
 #
-# 1. Basic transformation (default batch size):
-#    python transforms/transform_insider_transactions.py
+# 1. Initialize table structure and populate from all raw data:
+#    python transforms/transform_insider_transactions.py --init
 #
-# 2. Custom batch size for large datasets:
-#    python transforms/transform_insider_transactions.py --batch-size 5000
+# 2. Process only new unprocessed transactions:
+#    python transforms/transform_insider_transactions.py --process
 #
 # ============================================================================
 # OUTPUT TABLE STRUCTURE
