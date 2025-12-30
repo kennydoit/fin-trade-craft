@@ -1,0 +1,4 @@
+strategy,total_trades,winning_trades,losing_trades,win_rate,total_return,total_return_pct,avg_trade_return,avg_trade_return_pct,max_drawdown,sharpe_ratio,profit_factor,avg_holding_days,total_commission,gross_profit,gross_loss
+rsi_divergence,209,199,10,95.22%,375002.5601927,375.00%,1794.270622931579,1.79%,-0.87%,4.85,155.83,56.97607655502392,1203.0781073000003,377424.6139545,2422.0537618
+rsi_mean_reversion,41,37,4,90.24%,32942.8603772,32.94%,803.4843994439024,0.80%,-0.06%,6.84,98.53,62.951219512195124,195.9458228,33280.628697199994,337.76832000000013
+williams_extremes,4,4,0,100.00%,701.6657476999997,0.70%,175.4164369249999,0.18%,-0.00%,85.61,inf,16.0,16.6925523,701.6657476999997,0.0
