@@ -197,7 +197,8 @@ class TimeSeriesDailyAdjustedTransformer:
             # EMA crossovers (8/21 popular for swing trading)
             ema8 = symbol_data['close'].ewm(span=8).mean()
             ema21 = symbol_data['close'].ewm(span=21).mean()
-            df.loc[mask, 'ohlcv_ema_8_21_cross'] = (ema8 > ema21).astype(int)
+            # Handle None/NaN values before comparison
+            df.loc[mask, 'ohlcv_ema_8_21_cross'] = (ema8.fillna(0) > ema21.fillna(0)).astype(int)
             df.loc[mask, 'ohlcv_ema_8_21_ratio'] = self.safe_divide(ema8, ema21)
             
         return df
@@ -227,20 +228,23 @@ class TimeSeriesDailyAdjustedTransformer:
             # RSI with overbought/oversold signals
             for period in self.rsi_periods:
                 rsi_values = ta.rsi(symbol_data['close'], length=period)
-                df.loc[mask, f'ohlcv_rsi_{period}'] = rsi_values
-                df.loc[mask, f'ohlcv_rsi_{period}_oversold'] = (rsi_values < 30).astype(int)
-                df.loc[mask, f'ohlcv_rsi_{period}_overbought'] = (rsi_values > 70).astype(int)
+                if rsi_values is not None:
+                    df.loc[mask, f'ohlcv_rsi_{period}'] = rsi_values
+                    # Handle None/NaN values before comparison
+                    df.loc[mask, f'ohlcv_rsi_{period}_oversold'] = (rsi_values.fillna(50) < 30).astype(int)
+                    df.loc[mask, f'ohlcv_rsi_{period}_overbought'] = (rsi_values.fillna(50) > 70).astype(int)
             
             # MACD (12,26,9 - standard parameters)
             try:
                 macd = ta.macd(symbol_data['close'], fast=12, slow=26, signal=9)
-                if not macd.empty:
+                if macd is not None and not macd.empty:
                     df.loc[mask, 'ohlcv_macd'] = macd['MACD_12_26_9']
                     df.loc[mask, 'ohlcv_macd_signal'] = macd['MACDs_12_26_9']
                     df.loc[mask, 'ohlcv_macd_histogram'] = macd['MACDh_12_26_9']
-                    df.loc[mask, 'ohlcv_macd_bullish'] = (
-                        macd['MACD_12_26_9'] > macd['MACDs_12_26_9']
-                    ).astype(int)
+                    # Handle None/NaN values before comparison
+                    macd_line = macd['MACD_12_26_9'].fillna(0)
+                    signal_line = macd['MACDs_12_26_9'].fillna(0)
+                    df.loc[mask, 'ohlcv_macd_bullish'] = (macd_line > signal_line).astype(int)
             except Exception as e:
                 logger.warning(f"MACD calculation failed for {symbol}: {e}")
             
@@ -283,17 +287,18 @@ class TimeSeriesDailyAdjustedTransformer:
                         symbol_data['high'], symbol_data['low'], 
                         symbol_data['close'], length=period
                     )
-                    df.loc[mask, f'ohlcv_atr_{period}'] = atr
-                    df.loc[mask, f'ohlcv_atr_{period}_pct'] = self.safe_divide(
-                        atr, symbol_data['close']
-                    ) * 100
+                    if atr is not None:
+                        df.loc[mask, f'ohlcv_atr_{period}'] = atr
+                        df.loc[mask, f'ohlcv_atr_{period}_pct'] = self.safe_divide(
+                            atr, symbol_data['close']
+                        ) * 100
                 except Exception as e:
                     logger.warning(f"ATR calculation failed for {symbol}: {e}")
                     
             # Bollinger Bands (20,2 - standard parameters)
             try:
                 bb = ta.bbands(symbol_data['close'], length=20, std=2)
-                if not bb.empty:
+                if bb is not None and not bb.empty:
                     df.loc[mask, 'ohlcv_bb_upper'] = bb['BBU_20_2.0']
                     df.loc[mask, 'ohlcv_bb_middle'] = bb['BBM_20_2.0']
                     df.loc[mask, 'ohlcv_bb_lower'] = bb['BBL_20_2.0']

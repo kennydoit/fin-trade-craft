@@ -1,0 +1,15 @@
+# Trading Bot Requirements
+
+# Alpaca Trading API
+alpaca-py>=0.9.0
+
+# Scheduling
+schedule>=1.2.0
+
+# Already in main requirements:
+# pandas
+# numpy
+# scikit-learn
+# xgboost
+# psycopg2-binary
+# python-dotenv

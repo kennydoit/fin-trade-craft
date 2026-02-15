@@ -65,6 +65,7 @@ class TradingSignalsTransformer:
         self.strategies = {
             'ema_crossover': self.strategy_ema_crossover,
             'rsi_mean_reversion': self.strategy_rsi_mean_reversion,
+            'rsi_crossing': self.strategy_rsi_crossing,
             'macd_histogram_reversal': self.strategy_macd_histogram_reversal,
             'bollinger_breakout': self.strategy_bollinger_breakout,
             'volume_spike': self.strategy_volume_spike,
@@ -78,7 +79,9 @@ class TradingSignalsTransformer:
     def create_table(self):
         """Create the transforms.trading_signals table with self-watermarking."""
         try:
-            self.db.connect()
+            # Ensure connection is open
+            if not self.db.connection or self.db.connection.closed:
+                self.db.connect()
             
             create_table_sql = """
                 CREATE TABLE IF NOT EXISTS transforms.trading_signals (
@@ -116,8 +119,6 @@ class TradingSignalsTransformer:
         except Exception as e:
             logger.error(f"Error creating table: {e}")
             raise
-        finally:
-            self.db.close()
     
     def get_symbol_data(self, symbol_id, days_back=None):
         """
@@ -196,6 +197,18 @@ class TradingSignalsTransformer:
             
             # Convert symbol_id to integer
             df['symbol_id'] = df['symbol_id'].astype(int)
+            
+            # Check for missing technical indicators
+            indicator_cols = ['ohlcv_ema_8', 'ohlcv_ema_21', 'ohlcv_rsi_14']
+            missing_indicators = sum(df[col].isna().all() for col in indicator_cols)
+            
+            if missing_indicators > 0:
+                symbol = df['symbol'].iloc[0] if 'symbol' in df.columns else symbol_id
+                logger.debug(
+                    f"Symbol {symbol} (ID: {symbol_id}): {len(df)} rows retrieved, "
+                    f"but {missing_indicators}/{len(indicator_cols)} key indicators are completely NULL. "
+                    f"Run transform_time_series_daily_adjusted.py first."
+                )
             
             return df
             
@@ -296,6 +309,77 @@ class TradingSignalsTransformer:
                     'trade_strategy': 'rsi_mean_reversion',
                     'signal_strength': 100 - curr_rsi
                 })
+        
+        return signals
+    
+    def strategy_rsi_crossing(self, df):
+        """
+        RSI Crossing Strategy - Requires confirmation of extreme before reversal
+        
+        LONG (Buy): RSI must first go below 30, stay below or at 30 for at least one bar,
+                    then cross back above 30
+        SHORT (Sell): RSI must first go above 70, stay above or at 70 for at least one bar,
+                      then cross back below 70
+        
+        Example Long: 35, 31, 30, 28, 22, 28, 29, 31 <- triggers at 31
+        Example Short: 68, 69, 72, 73, 74, 70, 65 <- triggers at 65
+        """
+        signals = []
+        
+        if 'ohlcv_rsi_14' not in df.columns:
+            return signals
+        
+        df = df.dropna(subset=['ohlcv_rsi_14'])
+        
+        if len(df) < 3:  # Need at least 3 bars to detect pattern
+            return signals
+        
+        # Track state: has RSI been in extreme zone?
+        in_oversold_zone = False  # True when RSI has been <= 30
+        in_overbought_zone = False  # True when RSI has been >= 70
+        
+        for i in range(len(df)):
+            curr_rsi = df.iloc[i]['ohlcv_rsi_14']
+            
+            # Check if in or entering oversold zone (RSI <= 30)
+            if curr_rsi <= 30:
+                in_oversold_zone = True
+                in_overbought_zone = False
+            
+            # Check if in or entering overbought zone (RSI >= 70)
+            elif curr_rsi >= 70:
+                in_overbought_zone = True
+                in_oversold_zone = False
+            
+            # Check for buy signal: RSI crosses back above 30 after being at or below
+            elif in_oversold_zone and curr_rsi > 30:
+                # Verify we have previous bar at or below 30
+                if i > 0 and df.iloc[i-1]['ohlcv_rsi_14'] <= 30:
+                    signals.append({
+                        'symbol': df.iloc[i]['symbol'],
+                        'symbol_id': df.iloc[i]['symbol_id'],
+                        'date': df.iloc[i]['date'],
+                        'buy_signal': True,
+                        'sell_signal': False,
+                        'trade_strategy': 'rsi_crossing',
+                        'signal_strength': curr_rsi
+                    })
+                    in_oversold_zone = False  # Reset after signal
+            
+            # Check for sell signal: RSI crosses back below 70 after being at or above
+            elif in_overbought_zone and curr_rsi < 70:
+                # Verify we have previous bar at or above 70
+                if i > 0 and df.iloc[i-1]['ohlcv_rsi_14'] >= 70:
+                    signals.append({
+                        'symbol': df.iloc[i]['symbol'],
+                        'symbol_id': df.iloc[i]['symbol_id'],
+                        'date': df.iloc[i]['date'],
+                        'buy_signal': False,
+                        'sell_signal': True,
+                        'trade_strategy': 'rsi_crossing',
+                        'signal_strength': 100 - curr_rsi
+                    })
+                    in_overbought_zone = False  # Reset after signal
         
         return signals
     
@@ -733,7 +817,19 @@ class TradingSignalsTransformer:
             df = self.get_symbol_data(symbol_id, days_back)
             
             if df is None or df.empty:
-                logger.warning(f"No data for symbol_id {symbol_id}")
+                logger.debug(f"No raw data found for symbol_id {symbol_id}")
+                return 0
+            
+            # Check if technical indicators are available
+            indicator_cols = ['ohlcv_ema_8', 'ohlcv_ema_21', 'ohlcv_rsi_14', 'ohlcv_macd', 'ohlcv_bb_upper']
+            available_indicators = sum(df[col].notna().any() for col in indicator_cols if col in df.columns)
+            
+            if available_indicators == 0:
+                symbol = df['symbol'].iloc[0] if 'symbol' in df.columns else symbol_id
+                logger.debug(
+                    f"Symbol {symbol} (ID: {symbol_id}): Raw data exists but no technical indicators. "
+                    f"Run transform_time_series_daily_adjusted.py first."
+                )
                 return 0
             
             # Generate signals from strategies
@@ -900,6 +996,7 @@ class TradingSignalsTransformer:
             # Process each symbol
             total_signals = 0
             success_count = 0
+            no_data_count = 0
             
             for idx, symbol_id in enumerate(symbol_ids, 1):
                 if idx % 50 == 0 or idx == len(symbol_ids):
@@ -910,6 +1007,8 @@ class TradingSignalsTransformer:
                 if signals_count > 0:
                     success_count += 1
                     total_signals += signals_count
+                else:
+                    no_data_count += 1
             
             # Summary
             logger.info("=" * 80)
@@ -917,7 +1016,19 @@ class TradingSignalsTransformer:
             logger.info("=" * 80)
             logger.info(f"Symbols processed: {len(symbol_ids)}")
             logger.info(f"Successful: {success_count}")
+            logger.info(f"No signals generated: {no_data_count}")
             logger.info(f"Total signals generated: {total_signals:,}")
+            
+            if success_count == 0 and len(symbol_ids) > 0:
+                logger.warning("")
+                logger.warning("WARNING: NO SIGNALS GENERATED!")
+                logger.warning("")
+                logger.warning("This usually means technical indicators are missing.")
+                logger.warning("Please run this command first:")
+                logger.warning("  python transforms\\transform_time_series_daily_adjusted.py --mode incremental")
+                logger.warning("")
+                logger.warning("Then retry:")
+                logger.warning("  python transforms\\transform_trading_signals.py --mode incremental")
             
         except Exception as e:
             logger.error(f"Error in incremental mode: {e}")
